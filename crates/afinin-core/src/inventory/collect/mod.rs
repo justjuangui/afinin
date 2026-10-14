@@ -10,6 +10,7 @@ mod data;
 mod ec2;
 mod elb;
 mod lambda;
+pub mod lightsail;
 mod messaging;
 mod tagging;
 
@@ -72,8 +73,9 @@ async fn guarded(
     }
 }
 
-/// Runs every collector for one region, concurrently.
-pub async fn collect_region(ctx: &Ctx<'_>) -> Collected {
+/// Runs every collector for one region, concurrently. `lightsail` is false in
+/// regions without Lightsail, whose endpoints do not exist.
+pub async fn collect_region(ctx: &Ctx<'_>, lightsail: bool) -> Collected {
     let r = ctx.region;
     let (a, b, c, d, e, f, g, h) = futures::join!(
         guarded("ec2", r, ec2::collect(ctx)),
@@ -85,15 +87,22 @@ pub async fn collect_region(ctx: &Ctx<'_>) -> Collected {
         guarded("ecs", r, containers::ecs(ctx)),
         guarded("eks", r, containers::eks(ctx)),
     );
-    let (i, j, k, l, m) = futures::join!(
+    let (i, j, k, l, m, n) = futures::join!(
         guarded("sqs", r, messaging::sqs(ctx)),
         guarded("sns", r, messaging::sns(ctx)),
         guarded("apigateway", r, apigateway::rest(ctx)),
         guarded("apigatewayv2", r, apigateway::http(ctx)),
         guarded("tagging", r, tagging::collect(ctx)),
+        async {
+            if lightsail {
+                guarded("lightsail", r, lightsail::collect(ctx)).await
+            } else {
+                Collected::default()
+            }
+        },
     );
     let mut out = Collected::default();
-    for part in [a, b, c, d, e, f, g, h, i, j, k, l, m] {
+    for part in [a, b, c, d, e, f, g, h, i, j, k, l, m, n] {
         out.extend(part);
     }
     out

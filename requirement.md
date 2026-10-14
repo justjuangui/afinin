@@ -64,7 +64,7 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
 
 ### 4.3 Inventory & service dependency map
 
-- **FR-20** Discover resources across all enabled regions per account (EC2, EBS, ELB/ALB/NLB, RDS, Lambda, S3, DynamoDB, ECS/EKS, NAT Gateway, VPC/subnets, CloudFront, API Gateway, SQS/SNS, ElastiCache — extendable via a provider/plugin model).
+- **FR-20** Discover resources across all enabled regions per account (EC2, EBS, ELB/ALB/NLB, RDS, Lambda, S3, DynamoDB, ECS/EKS, NAT Gateway, VPC/subnets, CloudFront, API Gateway, SQS/SNS, ElastiCache, Lightsail — extendable via a provider/plugin model).
 - **FR-21** Use AWS Config relationships and Resource Explorer when enabled; fall back to service `Describe*/List*` APIs.
 - **FR-22** Infer relationships, e.g.: VPC → subnet → instance; LB → target group → instance/ECS service; Lambda → event source (SQS, DynamoDB stream, API Gateway); resource → security group; EBS → instance; ENI → owner.
 - **FR-23** Interactive graph view: zoom, filter by account/region/VPC/tag/service, search, click a node for details.

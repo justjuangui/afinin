@@ -65,6 +65,12 @@
         "sqs:ListQueues",
         "sns:ListTopics",
         "sns:ListSubscriptions",
+        "lightsail:GetRegions",
+        "lightsail:GetInstances",
+        "lightsail:GetRelationalDatabases",
+        "lightsail:GetLoadBalancers",
+        "lightsail:GetDisks",
+        "lightsail:GetStaticIps",
         "tag:GetResources"
       ],
       "Resource": "*"

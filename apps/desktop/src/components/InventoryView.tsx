@@ -56,6 +56,11 @@ const SHORT: Record<string, string> = {
   "ec2:subnet": "SN",
   "ec2:security-group": "SG",
   "ec2:network-interface": "ENI",
+  "lightsail:loadbalancer": "LSLB",
+  "lightsail:instance": "LS",
+  "lightsail:disk": "LSD",
+  "lightsail:database": "LSDB",
+  "lightsail:static-ip": "LSIP",
 };
 
 const KIND_LABEL: Record<RelationKind, string> = {
