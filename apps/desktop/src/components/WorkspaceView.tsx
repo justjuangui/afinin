@@ -11,6 +11,7 @@ import { ConfirmDialog } from "./Modal";
 import { CostDashboard } from "./CostDashboard";
 import { InventoryView } from "./InventoryView";
 import { FindingsView } from "./FindingsView";
+import { ChatPanel } from "./ChatPanel";
 import { CurSetupDialog } from "./CurSetupDialog";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
@@ -23,14 +24,21 @@ interface Props {
   workspace: Workspace;
   settings: Settings;
   onChanged: () => Promise<void>;
+  onOpenSettings: () => void;
 }
 
-export function WorkspaceView({ workspace, settings, onChanged }: Props) {
+export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }: Props) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [tab, setTab] = useState<Tab>("costs");
   const [dataVersion, setDataVersion] = useState(0);
   const [cur, setCur] = useState<CurStatus | null>(null);
   const [curAccount, setCurAccount] = useState<Account | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatPrompt, setChatPrompt] = useState<{ text: string; key: number } | null>(null);
+  const explain = (text: string) => {
+    setChatPrompt({ text, key: Date.now() });
+    setChatOpen(true);
+  };
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [ssoAccount, setSsoAccount] = useState<Account | null>(null);
@@ -182,6 +190,9 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
               {syncing ? "Syncing…" : "Sync now"}
             </button>
           )}
+          <button className="ghost" onClick={() => setChatOpen((o) => !o)} aria-pressed={chatOpen}>
+            Ask
+          </button>
           <button className="primary" onClick={() => setAdding(true)}>Add account</button>
         </div>
       </header>
@@ -223,7 +234,7 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
               curAvailable={(cur?.billing_periods.length ?? 0) > 0}
             />
           ) : tab === "findings" ? (
-            <FindingsView key={workspace.id} workspaceId={workspace.id} dataVersion={dataVersion} />
+            <FindingsView key={workspace.id} workspaceId={workspace.id} dataVersion={dataVersion} onExplain={explain} />
           ) : tab === "inventory" ? (
             <InventoryView
               key={workspace.id}
@@ -232,6 +243,7 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
               costTagKeys={settings.cost_tag_keys}
               onSync={syncAll}
               syncing={syncing}
+              onExplain={explain}
             />
           ) : (
             <table className="accounts">
@@ -306,6 +318,15 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
             setConfirming(null);
             void deleteWorkspace();
           }}
+        />
+      )}
+
+      {chatOpen && (
+        <ChatPanel
+          workspaceId={workspace.id}
+          prompt={chatPrompt}
+          onClose={() => setChatOpen(false)}
+          onOpenSettings={onOpenSettings}
         />
       )}
 

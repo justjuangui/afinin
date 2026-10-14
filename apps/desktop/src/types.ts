@@ -164,6 +164,7 @@ export interface Settings {
   snapshot_age_days: number;
   commitments_enabled: boolean;
   import_aws_anomalies: boolean;
+  llm: LlmSettings;
 }
 
 export interface ApiUsage {
@@ -317,4 +318,48 @@ export interface Insights {
   data_transfer_total: number;
   commitments: [string, CommitmentSummary][];
   unit: string;
+}
+
+export type ProviderKind = "none" | "open_ai_compatible" | "anthropic" | "bedrock";
+
+export interface LlmSettings {
+  provider: ProviderKind;
+  base_url: string;
+  model: string;
+  redact: boolean | null;
+  bedrock_account_id: string | null;
+  bedrock_region: string;
+}
+
+export interface Citation {
+  n: number;
+  tool: string;
+  input: Record<string, unknown>;
+  result: unknown;
+  ok: boolean;
+}
+
+export interface Turn {
+  conversation_id: string;
+  answer: string;
+  citations: Citation[];
+  stop: string;
+  model: string;
+  redacted: boolean;
+  masked_values: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface LlmLogEntry {
+  id: number;
+  conversation_id: string;
+  provider: string;
+  model: string;
+  redacted: boolean;
+  request: string;
+  response: string;
+  input_tokens: number;
+  output_tokens: number;
+  created_at: string;
 }

@@ -10,6 +10,7 @@ pub mod cur;
 pub mod error;
 pub mod findings;
 pub mod inventory;
+pub mod llm;
 pub mod model;
 pub mod profiles;
 pub mod secrets;
@@ -31,12 +32,14 @@ pub use error::{Error, Result};
 pub use findings::{Finding, FindingStatus};
 pub use inventory::graph::{Application, Facet, Graph, GraphFilter, InventoryFacets, TagFilter};
 pub use inventory::{Resource, ResourceType};
+pub use llm::agent::{Citation, Turn};
+pub use llm::{LlmSettings, ProviderKind};
 pub use model::{Account, ConnectionTest, SyncState, SyncStatus, Workspace};
 pub use profiles::{AwsFiles, AwsProfile, ProfileKind};
 pub use secrets::{KeychainStore, MemoryStore, SecretStore};
 pub use settings::Settings;
 pub use sso::{SsoLoginPrompt, SsoLoginStatus};
-pub use storage::{ApiUsage, CurStatus, InventoryScan, Storage};
+pub use storage::{ApiUsage, CurStatus, InventoryScan, LlmLogEntry, Storage};
 
 /// Where Afinín keeps its local data.
 #[derive(Debug, Clone)]
@@ -68,7 +71,12 @@ pub struct Afinin {
     syncing: Mutex<HashSet<String>>,
     /// Scratch space for CUR downloads (deleted right after loading).
     tmp_dir: PathBuf,
+    /// Assistant conversations, in memory only (the request log is persisted).
+    conversations: Mutex<HashMap<String, llm::agent::Conversation>>,
 }
+
+/// Keychain entry for the LLM provider's API key (FR-2).
+const LLM_KEY_SECRET: &str = "llm-api-key";
 
 /// Outcome of syncing one account: costs and inventory run independently.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
@@ -120,6 +128,7 @@ impl Afinin {
             pending_sso: Mutex::default(),
             syncing: Mutex::default(),
             tmp_dir: std::env::temp_dir().join("afinin"),
+            conversations: Mutex::default(),
         }
     }
 
@@ -856,6 +865,142 @@ impl Afinin {
             unit: usage.unit,
         })
     }
+
+    // ---- assistant (FR-40..FR-46) -----------------------------------------
+
+    pub fn set_llm_api_key(&self, key: Option<&str>) -> Result<()> {
+        match key.map(str::trim).filter(|k| !k.is_empty()) {
+            Some(k) => self.secrets.set(LLM_KEY_SECRET, k),
+            None => self.secrets.delete(LLM_KEY_SECRET),
+        }
+    }
+
+    pub fn has_llm_api_key(&self) -> Result<bool> {
+        Ok(self.secrets.get(LLM_KEY_SECRET)?.is_some())
+    }
+
+    async fn llm_provider(&self, cfg: &LlmSettings) -> Result<Box<dyn llm::Provider>> {
+        let key = self.secrets.get(LLM_KEY_SECRET)?;
+        Ok(match cfg.provider {
+            ProviderKind::None => {
+                return Err(Error::Other(
+                    "no assistant is configured; choose a provider in Settings".into(),
+                ));
+            }
+            ProviderKind::OpenAiCompatible => Box::new(llm::providers::OpenAiCompatible::new(
+                &cfg.base_url,
+                cfg.model(),
+                key,
+            )?),
+            ProviderKind::Anthropic => Box::new(llm::providers::Anthropic::new(
+                cfg.model(),
+                key.unwrap_or_default(),
+            )?),
+            ProviderKind::Bedrock => {
+                let account_id = cfg.bedrock_account_id.as_deref().ok_or_else(|| {
+                    Error::Other("choose which connected account calls Bedrock".into())
+                })?;
+                let account = self.db().get_account(account_id)?;
+                let config =
+                    aws::sdk_config(&self.profile(&account.profile)?, self.secrets.as_ref())
+                        .await?;
+                Box::new(llm::providers::Bedrock::new(
+                    &config,
+                    &cfg.bedrock_region,
+                    cfg.model(),
+                ))
+            }
+        })
+    }
+
+    /// Strings to mask besides pattern-matched identifiers: tag values and
+    /// resource names discovered in the workspace.
+    fn redaction_names(&self, workspace_id: &str) -> Result<Vec<String>> {
+        let (resources, _) = self.db().workspace_inventory(workspace_id)?;
+        let mut names: std::collections::BTreeSet<String> = Default::default();
+        for r in &resources {
+            names.extend(r.tags.values().cloned());
+            if let Some(n) = &r.name {
+                names.insert(n.clone());
+            }
+        }
+        for a in self.db().linked_account_values(workspace_id)? {
+            // Account names: "Name (123456789012)" → "Name".
+            if let Some((name, _)) = a.label.rsplit_once(" (") {
+                names.insert(name.to_owned());
+            }
+        }
+        Ok(names.into_iter().collect())
+    }
+
+    /// Asks the assistant (FR-41). Pass the previous turn's `conversation_id`
+    /// to continue a conversation.
+    pub async fn ask(
+        &self,
+        workspace_id: &str,
+        conversation_id: Option<&str>,
+        question: &str,
+    ) -> Result<Turn> {
+        let cfg = self.settings()?.llm;
+        let provider = self.llm_provider(&cfg).await?;
+        let existing = conversation_id.and_then(|id| {
+            self.conversations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(id)
+        });
+        let mut conv = match existing {
+            Some(c) => c,
+            None => llm::agent::Conversation {
+                id: uuid::Uuid::new_v4().to_string(),
+                messages: Vec::new(),
+                redactor: llm::redact::Redactor::new(
+                    cfg.redaction_enabled(),
+                    self.redaction_names(workspace_id)?,
+                ),
+                citations: Vec::new(),
+            },
+        };
+        let tools = llm::tools::specs();
+        let today = cost::dates::format(cost::dates::today_utc());
+        let conv_id = conv.id.clone();
+        let provider_name = format!("{:?}", cfg.provider);
+        let redacted = conv.redactor.enabled();
+        let result = llm::agent::run_turn(
+            provider.as_ref(),
+            &tools,
+            &mut conv,
+            question,
+            &today,
+            |name, input| llm::tools::execute(self, workspace_id, name, input),
+            |reply| {
+                let _ = self.db().log_llm_request(
+                    workspace_id,
+                    &conv_id,
+                    &provider_name,
+                    &reply.model,
+                    redacted,
+                    &serde_json::to_string_pretty(&reply.request_json).unwrap_or_default(),
+                    &serde_json::to_string_pretty(&reply.response_json).unwrap_or_default(),
+                    (reply.input_tokens, reply.output_tokens),
+                );
+            },
+        )
+        .await;
+        self.conversations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(conv.id.clone(), conv);
+        result
+    }
+
+    pub fn llm_log(&self, workspace_id: &str, limit: usize) -> Result<Vec<LlmLogEntry>> {
+        self.db().llm_log(workspace_id, limit)
+    }
+
+    pub fn clear_llm_log(&self, workspace_id: &str) -> Result<()> {
+        self.db().clear_llm_log(workspace_id)
+    }
 }
 
 /// Patterns and trends for the Insights view (FR-32).
@@ -1025,5 +1170,37 @@ mod tests {
             .set_finding_status(&f.id, &FindingStatus::Open)
             .unwrap();
         assert_eq!(afinin.findings(&ws, false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn assistant_tools_read_local_data() {
+        let (afinin, ws) = afinin_with_unattached_volume();
+        let findings =
+            llm::tools::execute(&afinin, &ws, "list_findings", &serde_json::json!({})).unwrap();
+        assert_eq!(findings["total_monthly_savings"], 20.0);
+        let found = llm::tools::execute(
+            &afinin,
+            &ws,
+            "search_resources",
+            &serde_json::json!({"query": "vol-1"}),
+        )
+        .unwrap();
+        assert_eq!(found["matches"][0]["type"], "ec2:volume");
+        let arn = found["matches"][0]["arn"].as_str().unwrap().to_owned();
+        let res = llm::tools::execute(
+            &afinin,
+            &ws,
+            "get_resource",
+            &serde_json::json!({"arn": arn}),
+        )
+        .unwrap();
+        assert_eq!(res["attributes"]["size_gib"], 200);
+        assert!(llm::tools::execute(&afinin, &ws, "nope", &serde_json::json!({})).is_err());
+        // Every tool has an object schema.
+        assert!(
+            llm::tools::specs()
+                .iter()
+                .all(|t| t.schema["type"] == "object")
+        );
     }
 }

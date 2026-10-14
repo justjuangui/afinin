@@ -196,6 +196,23 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (source_account, anomaly_id)
     );
     "#,
+    // v6: LLM request log (FR-45): exactly what was sent, kept locally.
+    r#"
+    CREATE SEQUENCE llm_log_id;
+    CREATE TABLE llm_log (
+        id               BIGINT PRIMARY KEY DEFAULT nextval('llm_log_id'),
+        workspace_id     TEXT NOT NULL,
+        conversation_id  TEXT NOT NULL,
+        provider         TEXT NOT NULL,
+        model            TEXT NOT NULL,
+        redacted         BOOLEAN NOT NULL,
+        request          TEXT NOT NULL,
+        response         TEXT NOT NULL,
+        input_tokens     BIGINT NOT NULL,
+        output_tokens    BIGINT NOT NULL,
+        created_at       TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -219,12 +236,14 @@ mod cost;
 mod cur;
 mod findings;
 mod inventory;
+mod llm;
 mod settings;
 
 pub use cost::ApiUsage;
 pub use cur::CurStatus;
 pub use findings::PRICE_TTL_DAYS;
 pub use inventory::InventoryScan;
+pub use llm::LlmLogEntry;
 
 pub struct Storage {
     conn: Connection,

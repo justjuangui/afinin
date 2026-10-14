@@ -21,6 +21,8 @@ import type {
   Finding,
   FindingStatus,
   Insights,
+  LlmLogEntry,
+  Turn,
   Application,
   Facet,
   Graph,
@@ -91,6 +93,12 @@ export const api = {
   setFindingStatus: (findingId: string, status: FindingStatus) =>
     invoke<void>("set_finding_status", { findingId, status }),
   insights: (workspaceId: string) => invoke<Insights>("insights", { workspaceId }),
+  ask: (workspaceId: string, conversationId: string | null, question: string) =>
+    invoke<Turn>("ask", { workspaceId, conversationId, question }),
+  setLlmApiKey: (key: string | null) => invoke<void>("set_llm_api_key", { key }),
+  hasLlmApiKey: () => invoke<boolean>("has_llm_api_key"),
+  llmLog: (workspaceId: string) => invoke<LlmLogEntry[]>("llm_log", { workspaceId }),
+  clearLlmLog: (workspaceId: string) => invoke<void>("clear_llm_log", { workspaceId }),
   exportCsv: (query: CostQuery, compare: [string, string] | null, fileName: string) =>
     invoke<boolean>("export_csv", { query, compare, fileName }),
 };

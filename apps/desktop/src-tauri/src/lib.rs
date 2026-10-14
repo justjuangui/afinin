@@ -13,7 +13,9 @@ use afinin_core::{
     AccountSyncReport, Application, Facet, Graph, GraphFilter, InventoryFacets, InventoryScan,
     Resource,
 };
-use afinin_core::{CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights};
+use afinin_core::{
+    CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights, LlmLogEntry, Turn,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -425,6 +427,42 @@ fn insights(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Insig
     state.core()?.insights(&workspace_id)
 }
 
+// ---- assistant -----------------------------------------------------------------
+
+#[tauri::command]
+async fn ask(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    conversation_id: Option<String>,
+    question: String,
+) -> CmdResult<Turn> {
+    state
+        .core()?
+        .ask(&workspace_id, conversation_id.as_deref(), &question)
+        .await
+}
+
+/// Stores (or with `None`, removes) the provider API key in the OS keychain.
+#[tauri::command]
+fn set_llm_api_key(state: State<'_, AppState>, key: Option<String>) -> CmdResult<()> {
+    state.core()?.set_llm_api_key(key.as_deref())
+}
+
+#[tauri::command]
+fn has_llm_api_key(state: State<'_, AppState>) -> CmdResult<bool> {
+    state.core()?.has_llm_api_key()
+}
+
+#[tauri::command]
+fn llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<LlmLogEntry>> {
+    state.core()?.llm_log(&workspace_id, 200)
+}
+
+#[tauri::command]
+fn clear_llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<()> {
+    state.core()?.clear_llm_log(&workspace_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -487,6 +525,11 @@ pub fn run() {
             findings,
             set_finding_status,
             insights,
+            ask,
+            set_llm_api_key,
+            has_llm_api_key,
+            llm_log,
+            clear_llm_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Afinín");

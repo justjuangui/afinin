@@ -80,7 +80,13 @@ export default function App() {
       {view === "settings" ? (
         <SettingsView settings={settings} onSaved={setSettings} />
       ) : (
-        <WorkspaceView key={selected.id} workspace={selected} settings={settings} onChanged={reload} />
+        <WorkspaceView
+          key={selected.id}
+          workspace={selected}
+          settings={settings}
+          onChanged={reload}
+          onOpenSettings={() => setView("settings")}
+        />
       )}
     </div>
   );

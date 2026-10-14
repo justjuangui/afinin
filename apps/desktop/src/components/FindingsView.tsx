@@ -22,9 +22,10 @@ const KINDS: { id: FindingKind | "all"; label: string }[] = [
 interface Props {
   workspaceId: string;
   dataVersion: number;
+  onExplain: (prompt: string) => void;
 }
 
-export function FindingsView({ workspaceId, dataVersion }: Props) {
+export function FindingsView({ workspaceId, dataVersion, onExplain }: Props) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [insights, setInsights] = useState<Insights | null>(null);
   const [kind, setKind] = useState<FindingKind | "all">("all");
@@ -183,6 +184,14 @@ export function FindingsView({ workspaceId, dataVersion }: Props) {
                         ))}
                       </dl>
                       <div className="finding-actions">
+                        <button
+                          className="ghost"
+                          onClick={() =>
+                            onExplain(`Explain finding ${f.id}: why it matters, what it costs and how to fix it. Use get_finding.`)
+                          }
+                        >
+                          Explain this
+                        </button>
                         {f.status.status === "open" ? (
                           <>
                             <button className="ghost" onClick={() => setStatus(f, { status: "snoozed", until: addDays(todayUtc(), 7) })}>

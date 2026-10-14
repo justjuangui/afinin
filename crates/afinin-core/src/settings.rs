@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::cost::CostMetric;
 use crate::error::{Error, Result};
 use crate::findings::Sensitivity;
+use crate::llm::LlmSettings;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -33,6 +34,8 @@ pub struct Settings {
     pub commitments_enabled: bool,
     /// Import AWS Cost Anomaly Detection findings on each sync ($0.01 per request).
     pub import_aws_anomalies: bool,
+    /// Optional assistant (FR-40); the API key lives in the keychain.
+    pub llm: LlmSettings,
 }
 
 impl Default for Settings {
@@ -49,6 +52,7 @@ impl Default for Settings {
             snapshot_age_days: 90,
             commitments_enabled: true,
             import_aws_anomalies: false,
+            llm: LlmSettings::default(),
         }
     }
 }

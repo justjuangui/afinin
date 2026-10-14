@@ -37,6 +37,10 @@ aws-sdk-elasticache = "1"
 aws-sdk-resourcegroupstagging = "1"
 aws-sdk-bcmdataexports = "1"
 aws-sdk-pricing = "1"
+aws-sdk-bedrockruntime = "1"
+aws-smithy-types = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
+regex = "1"
 futures = "0.3"
 duckdb = { version = "1", features = ["bundled"] }
 keyring = "4"

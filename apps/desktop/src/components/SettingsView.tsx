@@ -3,7 +3,25 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { money } from "../format";
-import type { ApiUsage, CostMetric, Settings } from "../types";
+import type { Account, ApiUsage, CostMetric, LlmSettings, ProviderKind, Settings } from "../types";
+
+const PROVIDERS: { id: ProviderKind; label: string }[] = [
+  { id: "none", label: "None (assistant off)" },
+  { id: "open_ai_compatible", label: "Local or OpenAI-compatible (Ollama, LM Studio, OpenAI…)" },
+  { id: "anthropic", label: "Anthropic (Claude)" },
+  { id: "bedrock", label: "Amazon Bedrock" },
+];
+
+/** Mirrors `LlmSettings::is_local` in the core. */
+function isLocal(llm: LlmSettings): boolean {
+  if (llm.provider !== "open_ai_compatible") return false;
+  try {
+    const host = new URL(llm.base_url).hostname.toLowerCase();
+    return ["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"].includes(host) || host.endsWith(".local");
+  } catch {
+    return false;
+  }
+}
 
 interface Props {
   settings: Settings;
@@ -23,12 +41,33 @@ export function SettingsView({ settings, onSaved }: Props) {
   const [tags, setTags] = useState(settings.cost_tag_keys.join(", "));
   const [regions, setRegions] = useState(settings.inventory_regions.join(", "));
   const [usage, setUsage] = useState<ApiUsage[] | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [hasKey, setHasKey] = useState(false);
+  const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.apiUsage().then(setUsage, (e) => setError(errorMessage(e)));
+    api.listAccounts().then(setAccounts, (e) => setError(errorMessage(e)));
+    api.hasLlmApiKey().then(setHasKey, () => setHasKey(false));
   }, []);
+
+  const llm = draft.llm;
+  const setLlm = (patch: Partial<LlmSettings>) => setDraft({ ...draft, llm: { ...llm, ...patch } });
+  const local = isLocal(llm);
+  const redacting = llm.redact ?? !local;
+
+  const saveKey = async (key: string | null) => {
+    try {
+      await api.setLlmApiKey(key);
+      setHasKey(!!key);
+      setApiKey("");
+      setStatus(key ? "API key saved to the OS keychain" : "API key removed");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,6 +200,102 @@ export function SettingsView({ settings, onSaved }: Props) {
           />
           Import AWS Cost Anomaly Detection findings ($0.01 per sync)
         </label>
+
+        <h2>Assistant</h2>
+        <label>
+          Provider
+          <select value={llm.provider} onChange={(e) => setLlm({ provider: e.target.value as ProviderKind, model: "" })}>
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <span className="hint">Optional. Afinín works fully without an assistant.</span>
+        </label>
+        {llm.provider === "open_ai_compatible" && (
+          <label>
+            Server URL
+            <input value={llm.base_url} onChange={(e) => setLlm({ base_url: e.target.value })} />
+            <span className="hint">
+              Ollama: <code>http://localhost:11434/v1</code> · LM Studio: <code>http://localhost:1234/v1</code> · OpenAI:{" "}
+              <code>https://api.openai.com/v1</code>
+            </span>
+          </label>
+        )}
+        {llm.provider === "bedrock" && (
+          <div className="form-grid">
+            <label>
+              Credentials from account
+              <select
+                value={llm.bedrock_account_id ?? ""}
+                onChange={(e) => setLlm({ bedrock_account_id: e.target.value || null })}
+              >
+                <option value="">Choose…</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.profile})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Bedrock region
+              <input value={llm.bedrock_region} onChange={(e) => setLlm({ bedrock_region: e.target.value })} />
+            </label>
+          </div>
+        )}
+        {llm.provider !== "none" && (
+          <>
+            <label>
+              Model
+              <input
+                placeholder={
+                  llm.provider === "anthropic"
+                    ? "claude-opus-5-5"
+                    : llm.provider === "bedrock"
+                      ? "anthropic.claude-opus-5-5"
+                      : "llama3.1"
+                }
+                value={llm.model}
+                onChange={(e) => setLlm({ model: e.target.value })}
+              />
+              <span className="hint">Use a model that supports tool calling.</span>
+            </label>
+            {(llm.provider === "anthropic" || llm.provider === "open_ai_compatible") && (
+              <label>
+                API key {hasKey && <span className="badge ok">stored in keychain</span>}
+                <div className="inline-row">
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={hasKey ? "Replace stored key" : llm.provider === "open_ai_compatible" ? "Not needed for local servers" : ""}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  <button type="button" className="ghost" disabled={!apiKey} onClick={() => saveKey(apiKey)}>
+                    Save key
+                  </button>
+                  {hasKey && (
+                    <button type="button" className="ghost danger" onClick={() => saveKey(null)}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </label>
+            )}
+            <label className="check">
+              <input type="checkbox" checked={redacting} onChange={(e) => setLlm({ redact: e.target.checked })} />
+              Mask account IDs, ARNs, resource IDs, IPs, host names, tag values and names before sending
+            </label>
+            <span className="hint">
+              {local
+                ? "Local server: data stays on this machine, so masking is off by default."
+                : "Cloud provider: masking is on by default. The answer you see has the real values restored."}{" "}
+              Every request is logged locally (Assistant → Show what was sent).
+            </span>
+          </>
+        )}
 
         <h2>Costs</h2>
         <label>

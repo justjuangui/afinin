@@ -136,6 +136,7 @@ interface Props {
   costTagKeys: string[];
   onSync: () => void;
   syncing: boolean;
+  onExplain: (prompt: string) => void;
 }
 
 export function InventoryView(props: Props) {
@@ -146,7 +147,7 @@ export function InventoryView(props: Props) {
   );
 }
 
-function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing }: Props) {
+function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onExplain }: Props) {
   const [mode, setMode] = useState<"graph" | "applications">("graph");
   const [filter, setFilter] = useState<GraphFilter>(EMPTY_FILTER);
   const [facets, setFacets] = useState<InventoryFacets | null>(null);
@@ -455,7 +456,16 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing }: P
             )}
           </div>
           {selectedNode && graph && (
-            <Details node={selectedNode} graph={graph} byId={byId} onSelect={focus} onClose={() => setSelected(null)} />
+            <Details
+              node={selectedNode}
+              graph={graph}
+              byId={byId}
+              onSelect={focus}
+              onClose={() => setSelected(null)}
+              onExplain={() =>
+                onExplain(`Explain the resource ${selectedNode.id}: what it is, what it is connected to and what it costs.`)
+              }
+            />
           )}
         </div>
       )}
@@ -469,12 +479,14 @@ function Details({
   byId,
   onSelect,
   onClose,
+  onExplain,
 }: {
   node: GraphNode;
   graph: Graph;
   byId: Map<string, GraphNode>;
   onSelect: (id: string) => void;
   onClose: () => void;
+  onExplain: () => void;
 }) {
   const links = graph.edges
     .filter((e: GraphEdge) => e.source === node.id || e.target === node.id)
@@ -496,6 +508,9 @@ function Details({
           ×
         </button>
       </header>
+      <button className="ghost explain" onClick={onExplain}>
+        Explain this resource
+      </button>
       <dl>
         <dt>ID</dt>
         <dd>
