@@ -357,6 +357,8 @@ export interface Turn {
   assumptions: string[];
   /** Workspace context revision sent with the question (0 = none). */
   context_revision: number;
+  /** Figures in the answer that match nothing in the data. */
+  unverified_figures: string[];
 }
 
 export type AssistantProgress = { workspace_id: string } & (

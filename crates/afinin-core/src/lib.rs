@@ -1061,8 +1061,8 @@ impl Afinin {
             .unwrap_or_else(|| "unblended".into());
         // The workspace context is written by the user but may name accounts,
         // applications and people: mask it like everything else sent.
-        let (context, context_revision) = self.rendered_context(workspace_id)?;
-        let context = conv.redactor.mask(&context);
+        let (plain_context, context_revision) = self.rendered_context(workspace_id)?;
+        let context = conv.redactor.mask(&plain_context);
         let screen = conv
             .redactor
             .mask(&screen.map(|s| s.render()).unwrap_or_default());
@@ -1104,6 +1104,11 @@ impl Afinin {
             if !context.is_empty() {
                 turn.context_revision = context_revision;
             }
+            // Any source of the conversation may back a figure, not only this turn's.
+            let results: Vec<&serde_json::Value> =
+                conv.citations.iter().map(|c| &c.result).collect();
+            turn.unverified_figures =
+                llm::grounding::unverified(&turn.answer, &results, &[question, &plain_context]);
             turn
         });
         self.conversations
