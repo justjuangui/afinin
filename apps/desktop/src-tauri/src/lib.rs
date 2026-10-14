@@ -4,12 +4,20 @@
 //! surface minimal (NFR-5).
 
 use afinin_core::{
-    Account, Afinin, AppPaths, AwsFiles, AwsProfile, Error, KeychainStore, SsoLoginPrompt,
-    SsoLoginStatus, Workspace,
+    Account, Afinin, ApiUsage, AppPaths, AwsFiles, AwsProfile, CostComparisonRow, CostMetric,
+    CostOverview, CostQuery, CostSeries, DimensionValue, Error, GroupBy, KeychainStore, Settings,
+    SsoLoginPrompt, SsoLoginStatus, SyncReport, Workspace,
 };
 use std::sync::Arc;
-use tauri::State;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+/// Event telling the UI that an account's sync status or data changed.
+const SYNC_EVENT: &str = "sync-changed";
+/// How often the background scheduler looks for accounts due for sync.
+const SCHEDULER_TICK: Duration = Duration::from_secs(10 * 60);
 
 type CmdResult<T> = Result<T, Error>;
 
@@ -130,6 +138,143 @@ fn sso_logout(state: State<'_, AppState>, profile: String) -> CmdResult<()> {
     state.core()?.sso_logout(&profile)
 }
 
+// ---- settings ------------------------------------------------------------
+
+#[tauri::command]
+fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
+    state.core()?.settings()
+}
+
+#[tauri::command]
+fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+    state.core()?.save_settings(&settings)
+}
+
+// ---- sync ----------------------------------------------------------------
+
+async fn run_sync(app: &AppHandle, core: &Afinin, account_id: &str) -> CmdResult<SyncReport> {
+    let _ = app.emit(SYNC_EVENT, account_id);
+    let result = core.sync_account(account_id).await;
+    let _ = app.emit(SYNC_EVENT, account_id);
+    result
+}
+
+#[tauri::command]
+async fn sync_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CmdResult<SyncReport> {
+    run_sync(&app, state.core()?, &id).await
+}
+
+/// Syncs every account of a workspace in turn. Failures are reported per
+/// account through its sync status, so one bad account doesn't stop the rest.
+#[tauri::command]
+async fn sync_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<()> {
+    let core = state.core()?;
+    for account in core.list_accounts(Some(&workspace_id))? {
+        let _ = run_sync(&app, core, &account.id).await;
+    }
+    Ok(())
+}
+
+/// Background sync on the configured schedule (FR-50).
+fn spawn_scheduler(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let state = app.state::<AppState>();
+            if let Ok(core) = state.core() {
+                match core.accounts_due_for_sync() {
+                    Ok(due) => {
+                        for id in due {
+                            let _ = run_sync(&app, core, &id).await;
+                        }
+                    }
+                    Err(e) => tracing::warn!("scheduler: {e}"),
+                }
+            }
+            tokio::time::sleep(SCHEDULER_TICK).await;
+        }
+    });
+}
+
+#[tauri::command]
+fn api_usage(state: State<'_, AppState>) -> CmdResult<Vec<ApiUsage>> {
+    state.core()?.api_usage_this_month()
+}
+
+// ---- costs ---------------------------------------------------------------
+
+#[tauri::command]
+fn cost_overview(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    metric: CostMetric,
+    linked_accounts: Vec<String>,
+) -> CmdResult<CostOverview> {
+    state
+        .core()?
+        .cost_overview(&workspace_id, metric, &linked_accounts)
+}
+
+#[tauri::command]
+fn cost_series(state: State<'_, AppState>, query: CostQuery) -> CmdResult<CostSeries> {
+    state.core()?.cost_series(&query)
+}
+
+#[tauri::command]
+fn compare_costs(
+    state: State<'_, AppState>,
+    query: CostQuery,
+    prev_start: String,
+    prev_end: String,
+) -> CmdResult<Vec<CostComparisonRow>> {
+    state.core()?.compare_costs(&query, &prev_start, &prev_end)
+}
+
+#[tauri::command]
+fn dimension_values(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    group_by: GroupBy,
+) -> CmdResult<Vec<DimensionValue>> {
+    state.core()?.dimension_values(&workspace_id, &group_by)
+}
+
+/// Asks where to save and writes the CSV (FR-16). Returns `false` if cancelled.
+/// The file dialog runs on the Rust side so the webview needs no fs access.
+#[tauri::command]
+async fn export_csv(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    query: CostQuery,
+    compare: Option<(String, String)>,
+    file_name: String,
+) -> CmdResult<bool> {
+    let core = state.core()?;
+    let csv = match &compare {
+        Some((start, end)) => core.export_comparison_csv(&query, start, end)?,
+        None => core.export_series_csv(&query)?,
+    };
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(&file_name)
+        .blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path().map_err(|e| Error::Other(e.to_string()))?;
+    std::fs::write(path, csv)?;
+    Ok(true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -145,7 +290,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState(core))
+        .setup(|app| {
+            spawn_scheduler(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             startup_error,
             list_profiles,
@@ -161,6 +311,16 @@ pub fn run() {
             poll_sso_login,
             sso_logout,
             open_docs,
+            get_settings,
+            save_settings,
+            sync_account,
+            sync_workspace,
+            api_usage,
+            cost_overview,
+            cost_series,
+            compare_costs,
+            dimension_values,
+            export_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Afinín");

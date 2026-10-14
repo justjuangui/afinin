@@ -18,6 +18,8 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_ENV_"],
   build: {
     target: "es2022",
+    // ECharts is bundled locally; size matters little for a desktop app.
+    chunkSizeWarningLimit: 2000,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
 });

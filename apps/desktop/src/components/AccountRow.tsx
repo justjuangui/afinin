@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+import { relativeTime } from "../format";
 import { KIND_LABEL } from "../profileKind";
 import type { Account } from "../types";
 
@@ -7,12 +8,14 @@ interface Props {
   account: Account;
   testing: boolean;
   onTest: () => void;
+  onSync: () => void;
   onSignIn: () => void;
   onRemove: () => void;
 }
 
-export function AccountRow({ account, testing, onTest, onSignIn, onRemove }: Props) {
+export function AccountRow({ account, testing, onTest, onSync, onSignIn, onRemove }: Props) {
   const test = account.last_test;
+  const sync = account.sync;
   return (
     <tr>
       <td>
@@ -44,6 +47,21 @@ export function AccountRow({ account, testing, onTest, onSignIn, onRemove }: Pro
         )}
         {test && !test.ok && !testing && <div className="error small clamp">{test.error}</div>}
       </td>
+      <td>
+        {!sync ? (
+          <span className="status">Never synced</span>
+        ) : sync.state === "running" ? (
+          <span className="status pending">Syncing…</span>
+        ) : sync.state === "ok" ? (
+          <span className="status ok">Synced {relativeTime(sync.last_success_at)}</span>
+        ) : (
+          <>
+            <span className="status fail" title={sync.error ?? undefined}>Sync failed</span>
+            <div className="error small clamp">{sync.error}</div>
+            {sync.last_success_at && <div className="muted small">Last good: {relativeTime(sync.last_success_at)}</div>}
+          </>
+        )}
+      </td>
       <td className="row-actions">
         {account.kind === "sso" && (
           <button className="ghost" onClick={onSignIn}>
@@ -52,6 +70,9 @@ export function AccountRow({ account, testing, onTest, onSignIn, onRemove }: Pro
         )}
         <button className="ghost" onClick={onTest} disabled={testing}>
           Test
+        </button>
+        <button className="ghost" onClick={onSync} disabled={sync?.state === "running"}>
+          Sync
         </button>
         <button className="ghost danger" onClick={onRemove}>
           Remove

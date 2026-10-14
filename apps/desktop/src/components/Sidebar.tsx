@@ -6,12 +6,14 @@ import type { Workspace } from "../types";
 
 interface Props {
   workspaces: Workspace[];
-  selectedId: string;
+  selectedId: string | null;
+  settingsActive: boolean;
   onSelect: (id: string) => void;
+  onSettings: () => void;
   onCreate: (name: string) => Promise<void>;
 }
 
-export function Sidebar({ workspaces, selectedId, onSelect, onCreate }: Props) {
+export function Sidebar({ workspaces, selectedId, settingsActive, onSelect, onSettings, onCreate }: Props) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +65,11 @@ export function Sidebar({ workspaces, selectedId, onSelect, onCreate }: Props) {
           + New workspace
         </button>
       )}
+      <div className="sidebar-footer">
+        <button className={settingsActive ? "nav-item active" : "nav-item"} onClick={onSettings}>
+          Settings
+        </button>
+      </div>
     </nav>
   );
 }

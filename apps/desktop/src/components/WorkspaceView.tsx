@@ -2,21 +2,28 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import type { Account, Workspace } from "../types";
+import { relativeTime } from "../format";
+import type { Account, Settings, Workspace } from "../types";
 import { AccountRow } from "./AccountRow";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { SsoLoginDialog } from "./SsoLoginDialog";
 import { ConfirmDialog } from "./Modal";
+import { CostDashboard } from "./CostDashboard";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
 
+type Tab = "costs" | "accounts";
+
 interface Props {
   workspace: Workspace;
+  settings: Settings;
   onChanged: () => Promise<void>;
 }
 
-export function WorkspaceView({ workspace, onChanged }: Props) {
-  const [accounts, setAccounts] = useState<Account[]>([]);
+export function WorkspaceView({ workspace, settings, onChanged }: Props) {
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [tab, setTab] = useState<Tab>("costs");
+  const [dataVersion, setDataVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [ssoAccount, setSsoAccount] = useState<Account | null>(null);
@@ -43,11 +50,38 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
     };
   }, [workspace.id]);
 
+  // Sync runs in the backend (manual or scheduled); refresh when it reports progress.
+  useEffect(() => {
+    const unlisten = api.onSyncChanged(() => {
+      void reload();
+      setDataVersion((v) => v + 1);
+    });
+    return () => {
+      void unlisten.then((f) => f());
+    };
+  }, [reload]);
+
+  const syncAll = async () => {
+    try {
+      await api.syncWorkspace(workspace.id);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
+  const syncOne = async (account: Account) => {
+    try {
+      await api.syncAccount(account.id);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
   const test = async (account: Account) => {
     setTesting((s) => new Set(s).add(account.id));
     try {
       const updated = await api.testConnection(account.id);
-      setAccounts((list) => list.map((a) => (a.id === updated.id ? updated : a)));
+      setAccounts((list) => list?.map((a) => (a.id === updated.id ? updated : a)) ?? null);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -90,6 +124,16 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
     }
   };
 
+  const list = accounts ?? [];
+  const syncing = list.some((a) => a.sync?.state === "running");
+  const failedSyncs = list.filter((a) => a.sync?.state === "error").length;
+  const lastSynced =
+    list
+      .map((a) => a.sync?.last_success_at)
+      .filter((t): t is string => !!t)
+      .sort()
+      .at(-1) ?? null;
+
   return (
     <main className="content">
       <header className="page-header">
@@ -109,7 +153,8 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
             </form>
           )}
           <p className="muted">
-            {accounts.length} account{accounts.length === 1 ? "" : "s"} · read-only access
+            {list.length} account{list.length === 1 ? "" : "s"} · read-only access
+            {list.length > 0 && <> · last synced {relativeTime(lastSynced)}</>}
           </p>
         </div>
         <div className="actions">
@@ -117,6 +162,11 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
           <button className="ghost danger" onClick={() => setConfirming({ kind: "delete-workspace" })}>
             Delete
           </button>
+          {list.length > 0 && (
+            <button className="ghost" onClick={syncAll} disabled={syncing}>
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
+          )}
           <button className="primary" onClick={() => setAdding(true)}>Add account</button>
         </div>
       </header>
@@ -127,7 +177,7 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
         </p>
       )}
 
-      {accounts.length === 0 ? (
+      {accounts === null ? null : list.length === 0 ? (
         <section className="empty">
           <h2>Connect your first AWS account</h2>
           <p className="muted">
@@ -137,35 +187,59 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
           <button className="primary" onClick={() => setAdding(true)}>Add account</button>
         </section>
       ) : (
-        <table className="accounts">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Profile</th>
-              <th>Account ID</th>
-              <th>Status</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.map((a) => (
-              <AccountRow
-                key={a.id}
-                account={a}
-                testing={testing.has(a.id)}
-                onTest={() => test(a)}
-                onSignIn={() => setSsoAccount(a)}
-                onRemove={() => setConfirming({ kind: "remove-account", account: a })}
-              />
+        <>
+          <nav className="tabs" role="tablist">
+            {(["costs", "accounts"] as Tab[]).map((t) => (
+              <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
+                {t === "costs" ? "Costs" : "Accounts"}
+                {t === "accounts" && failedSyncs > 0 && <span className="badge warn">{failedSyncs} failed</span>}
+              </button>
             ))}
-          </tbody>
-        </table>
+          </nav>
+
+          {tab === "costs" ? (
+            <CostDashboard
+              key={workspace.id}
+              workspaceId={workspace.id}
+              settings={settings}
+              dataVersion={dataVersion}
+              syncing={syncing}
+              onSync={syncAll}
+            />
+          ) : (
+            <table className="accounts">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Profile</th>
+                  <th>Account ID</th>
+                  <th>Connection</th>
+                  <th>Cost data</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((a) => (
+                  <AccountRow
+                    key={a.id}
+                    account={a}
+                    testing={testing.has(a.id)}
+                    onTest={() => test(a)}
+                    onSync={() => syncOne(a)}
+                    onSignIn={() => setSsoAccount(a)}
+                    onRemove={() => setConfirming({ kind: "remove-account", account: a })}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
 
       {adding && (
         <AddAccountDialog
           workspaceId={workspace.id}
-          existingProfiles={accounts.map((a) => a.profile)}
+          existingProfiles={list.map((a) => a.profile)}
           onClose={() => setAdding(false)}
           onAdded={async (account) => {
             setAdding(false);
@@ -193,7 +267,7 @@ export function WorkspaceView({ workspace, onChanged }: Props) {
           title="Delete workspace"
           message={
             <>
-              Delete “{workspace.name}” and its {accounts.length} account{accounts.length === 1 ? "" : "s"}?
+              Delete “{workspace.name}” and its {list.length} account{list.length === 1 ? "" : "s"}?
               Local data for these accounts is removed; your AWS profiles are not changed.
             </>
           }

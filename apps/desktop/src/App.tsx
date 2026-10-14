@@ -2,20 +2,24 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "./api";
-import type { Workspace } from "./types";
+import type { Settings, Workspace } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceView } from "./components/WorkspaceView";
 import { Onboarding } from "./components/Onboarding";
+import { SettingsView } from "./components/SettingsView";
 
 export default function App() {
   const [startupError, setStartupError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<"workspace" | "settings">("workspace");
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
-      const list = await api.listWorkspaces();
+      const [list, s] = await Promise.all([api.listWorkspaces(), api.getSettings()]);
+      setSettings(s);
       setWorkspaces(list);
       setSelectedId((cur) => (cur && list.some((w) => w.id === cur) ? cur : (list[0]?.id ?? null)));
     } catch (e) {
@@ -34,6 +38,7 @@ export default function App() {
     const ws = await api.createWorkspace(name);
     await reload();
     setSelectedId(ws.id);
+    setView("workspace");
   };
 
   if (startupError) {
@@ -49,7 +54,7 @@ export default function App() {
     );
   }
 
-  if (workspaces === null) {
+  if (workspaces === null || settings === null) {
     return <main className="loading">{error ?? "Loading…"}</main>;
   }
 
@@ -63,11 +68,20 @@ export default function App() {
     <div className="layout">
       <Sidebar
         workspaces={workspaces}
-        selectedId={selected.id}
-        onSelect={setSelectedId}
+        selectedId={view === "workspace" ? selected.id : null}
+        settingsActive={view === "settings"}
+        onSelect={(id) => {
+          setSelectedId(id);
+          setView("workspace");
+        }}
+        onSettings={() => setView("settings")}
         onCreate={createWorkspace}
       />
-      <WorkspaceView key={selected.id} workspace={selected} onChanged={reload} />
+      {view === "settings" ? (
+        <SettingsView settings={settings} onSaved={setSettings} />
+      ) : (
+        <WorkspaceView key={selected.id} workspace={selected} settings={settings} onChanged={reload} />
+      )}
     </div>
   );
 }
