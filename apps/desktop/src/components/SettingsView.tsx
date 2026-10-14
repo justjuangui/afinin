@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { money } from "../format";
 import { ConfirmDialog } from "./Modal";
-import type { Account, ApiUsage, CostMetric, LlmSettings, ProviderKind, Settings } from "../types";
+import type { Account, ApiUsage, CostMetric, LlmSettings, LlmUsage, ProviderKind, Settings } from "../types";
 import { Callout } from "./Callout";
 
 const PROVIDERS: { id: ProviderKind; label: string }[] = [
@@ -45,6 +45,7 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
   const [tags, setTags] = useState(settings.cost_tag_keys.join(", "));
   const [regions, setRegions] = useState(settings.inventory_regions.join(", "));
   const [usage, setUsage] = useState<ApiUsage[] | null>(null);
+  const [llmUsage, setLlmUsage] = useState<LlmUsage[] | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [hasKey, setHasKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -55,6 +56,7 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
 
   useEffect(() => {
     api.apiUsage().then(setUsage, (e) => setError(errorMessage(e)));
+    api.llmUsage().then(setLlmUsage, (e) => setError(errorMessage(e)));
     api.listAccounts().then(setAccounts, (e) => setError(errorMessage(e)));
     api.hasLlmApiKey().then(setHasKey, () => setHasKey(false));
   }, []);
@@ -453,6 +455,39 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
                     <td className="num">{totalCalls}</td>
                     <td className="num">{money(totalCost)}</td>
                   </tr>
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className="panel settings">
+            <h2>Assistant usage this month</h2>
+            <p className="muted small">
+              Tokens sent to and received from each model, from the request log (clearing the log resets these). Prices
+              differ by provider and plan; Bedrock usage is billed on your AWS bill as Amazon Bedrock.
+            </p>
+            {llmUsage && llmUsage.length === 0 && <p className="muted">No assistant requests yet this month.</p>}
+            {llmUsage && llmUsage.length > 0 && (
+              <table className="breakdown">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th className="num">Requests</th>
+                    <th className="num">Input tokens</th>
+                    <th className="num">Output tokens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {llmUsage.map((u) => (
+                    <tr key={`${u.provider}:${u.model}`}>
+                      <td>
+                        {u.model} <span className="muted small">{u.provider}</span>
+                      </td>
+                      <td className="num">{u.requests.toLocaleString()}</td>
+                      <td className="num">{u.input_tokens.toLocaleString()}</td>
+                      <td className="num">{u.output_tokens.toLocaleString()}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}

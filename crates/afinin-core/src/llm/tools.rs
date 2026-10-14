@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 
 use super::ToolSpec;
-use super::agent::Citation;
+use super::agent::{Citation, MissingData, MissingNeed};
 use crate::Afinin;
 use crate::cost::{CostFilter, CostMetric, CostQuery, Granularity, GroupBy, dates};
 use crate::error::{Error, Result};
@@ -122,6 +122,16 @@ pub fn specs() -> Vec<ToolSpec> {
             name: "get_insights",
             description: "Top movers by service (last 30 days vs previous 30), data transfer breakdown and Savings Plans / RI coverage.",
             schema: json!({"type": "object", "properties": {}}),
+        },
+        ToolSpec {
+            name: "report_missing_data",
+            description: "Record that the question can't be fully answered because Afinín lacks some data, so the app can offer the fix. \
+                          Call it before explaining what is missing.",
+            schema: json!({"type": "object", "properties": {
+                "need": {"type": "string", "enum": ["cur", "inventory_sync", "cost_allocation_tags", "longer_history", "other"],
+                         "description": "cur: per-resource costs; inventory_sync: resources not discovered yet; cost_allocation_tags: costs by a tag; longer_history: older periods."},
+                "detail": {"type": "string", "description": "One sentence on what is missing for this question."}
+            }, "required": ["need", "detail"]}),
         },
     ]
 }
@@ -382,6 +392,12 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
             })).collect::<Vec<_>>()}),
             )
         }
+        "report_missing_data" => {
+            let need: MissingNeed = serde_json::from_value(input["need"].clone())
+                .map_err(|_| Error::Other("unknown `need`".into()))?;
+            str_arg(input, "detail")?;
+            Ok(json!({"recorded": true, "need": need}))
+        }
         "get_insights" => serde_json::to_value(afinin.insights(workspace_id)?)
             .map_err(|e| Error::Other(e.to_string())),
         other => Err(Error::Other(format!("unknown tool `{other}`"))),
@@ -435,8 +451,32 @@ pub fn describe(name: &str, input: &Value) -> String {
             }
         }
         "get_insights" => "Reading trends and top movers".into(),
+        "report_missing_data" => "Noting data the answer needs".into(),
         other => format!("Running {other}"),
     }
+}
+
+/// Moves `report_missing_data` calls out of the sources: they are signals for
+/// the app, not data to cite.
+pub fn take_missing_data(citations: &mut Vec<Citation>) -> Vec<MissingData> {
+    let mut out: Vec<MissingData> = Vec::new();
+    citations.retain(|c| {
+        if c.tool != "report_missing_data" {
+            return true;
+        }
+        if let (true, Ok(need)) = (c.ok, serde_json::from_value(c.input["need"].clone())) {
+            let detail = c.input["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            if !out.iter().any(|m| m.need == need && m.detail == detail) {
+                out.push(MissingData { need, detail });
+            }
+        }
+        false
+    });
+    out
 }
 
 /// How the question was interpreted, derived from the tool calls the model
@@ -546,6 +586,36 @@ mod tests {
                 "Compared 2026-09-01 to 2026-09-30 with 2026-08-01 to 2026-08-31",
                 "Metric: unblended",
             ]
+        );
+    }
+
+    #[test]
+    fn missing_data_reports_leave_the_sources() {
+        let mut cites = vec![
+            cite(
+                "query_costs",
+                json!({"group_by": "service"}),
+                json!({"total": 1}),
+            ),
+            cite(
+                "report_missing_data",
+                json!({"need": "cur", "detail": "Per-resource costs need CUR."}),
+                json!({"recorded": true}),
+            ),
+            cite(
+                "report_missing_data",
+                json!({"need": "cur", "detail": "Per-resource costs need CUR."}),
+                json!({"recorded": true}),
+            ),
+        ];
+        let missing = take_missing_data(&mut cites);
+        assert_eq!(cites.len(), 1, "only real data stays citable");
+        assert_eq!(
+            missing,
+            [MissingData {
+                need: MissingNeed::Cur,
+                detail: "Per-resource costs need CUR.".into()
+            }]
         );
     }
 

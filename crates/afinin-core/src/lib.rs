@@ -43,8 +43,8 @@ pub use secrets::{KeychainStore, MemoryStore, SecretStore};
 pub use settings::Settings;
 pub use sso::{SsoLoginPrompt, SsoLoginStatus};
 pub use storage::{
-    ApiUsage, ContextRevision, ConversationSummary, CurStatus, InventoryScan, LlmLogEntry, Rating,
-    Storage, StoredTurn,
+    ApiUsage, ContextRevision, ConversationSummary, CurStatus, InventoryScan, LlmLogEntry,
+    LlmUsage, Rating, Storage, StoredTurn,
 };
 
 /// Where Afinín keeps its local data.
@@ -437,6 +437,17 @@ impl Afinin {
     }
 
     /// Billable AWS calls made by Afinín this calendar month (NFR-30).
+    /// Assistant requests this month, per provider and model (from the request log).
+    pub fn llm_usage_this_month(&self) -> Result<Vec<LlmUsage>> {
+        let month_start = cost::dates::first_of_month(cost::dates::today_utc());
+        self.db().llm_usage(&cost::dates::format(month_start))
+    }
+
+    /// Saved answers that reported missing data, newest first.
+    pub fn assistant_gaps(&self, workspace_id: &str) -> Result<Vec<StoredTurn>> {
+        self.db().assistant_gaps(workspace_id, 50)
+    }
+
     pub fn api_usage_this_month(&self) -> Result<Vec<ApiUsage>> {
         let month_start = cost::dates::first_of_month(cost::dates::today_utc());
         self.db().api_usage(&cost::dates::format(month_start))
@@ -1173,6 +1184,7 @@ impl Afinin {
         )
         .await
         .map(|mut turn| {
+            turn.missing_data = llm::tools::take_missing_data(&mut turn.citations);
             turn.assumptions = llm::tools::assumptions(&turn.citations);
             if !context.is_empty() {
                 turn.context_revision = context_revision;

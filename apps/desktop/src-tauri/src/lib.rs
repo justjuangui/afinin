@@ -17,8 +17,8 @@ use afinin_core::{
 };
 use afinin_core::{
     ContextRevision, ConversationSummary, CurConfig, CurStatus, CurValidation, Finding,
-    FindingStatus, Insights, LlmLogEntry, Rating, ScreenContext, StoredContext, StoredTurn, Turn,
-    WorkspaceContext,
+    FindingStatus, Insights, LlmLogEntry, LlmUsage, Rating, ScreenContext, StoredContext,
+    StoredTurn, Turn, WorkspaceContext,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -224,6 +224,11 @@ fn spawn_scheduler(app: AppHandle) {
 #[tauri::command]
 fn api_usage(state: State<'_, AppState>) -> CmdResult<Vec<ApiUsage>> {
     state.core()?.api_usage_this_month()
+}
+
+#[tauri::command]
+fn llm_usage(state: State<'_, AppState>) -> CmdResult<Vec<LlmUsage>> {
+    state.core()?.llm_usage_this_month()
 }
 
 // ---- costs ---------------------------------------------------------------
@@ -478,6 +483,11 @@ async fn recheck_reference(
         .core()?
         .recheck_reference(&workspace_id, turn_id, &progress)
         .await
+}
+
+#[tauri::command]
+fn assistant_gaps(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<StoredTurn>> {
+    state.core()?.assistant_gaps(&workspace_id)
 }
 
 #[tauri::command]
@@ -745,6 +755,8 @@ pub fn run() {
             assistant_conversations,
             assistant_turns,
             recheck_reference,
+            assistant_gaps,
+            llm_usage,
             reference_turns,
             set_reference_turn,
             rate_assistant_turn,
