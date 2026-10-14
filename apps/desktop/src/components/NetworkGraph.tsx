@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts/core";
 import { GraphChart } from "echarts/charts";
 import { TooltipComponent } from "echarts/components";
+import { LabelLayout } from "echarts/features";
 import { CanvasRenderer } from "echarts/renderers";
-import { money } from "../format";
-import { networkLayout } from "../networkLayout";
+import { networkOption, type NetworkColors } from "../networkChart";
+import { fitScale, networkLayout } from "../networkLayout";
 import { useDarkMode } from "../theme";
-import type { Graph, GraphNode } from "../types";
+import type { Graph } from "../types";
 
-echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
+echarts.use([GraphChart, TooltipComponent, LabelLayout, CanvasRenderer]);
 
 interface Props {
   graph: Graph;
@@ -26,17 +27,8 @@ interface Props {
   centerOn: { arn: string } | null;
 }
 
-/** Label every node only while it stays readable. */
-const LABEL_ALL_BELOW = 80;
-
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-function costLabel(n: GraphNode, unit: string): string {
-  if (n.cost === null) return "";
-  if (n.cost_basis === "list_price") return n.cost === 0 ? "included" : `${money(n.cost, "USD")}/mo list price`;
-  return `${money(n.cost, unit)} last 30 days${n.cost_basis === "service" ? " (service total)" : ""}`;
 }
 
 /**
@@ -47,8 +39,35 @@ export function NetworkGraph({ graph, short, selected, onSelect, matches, steps,
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
   const dark = useDarkMode();
-  const positions = useMemo(() => networkLayout(graph.nodes, graph.edges), [graph]);
-  const index = useMemo(() => new Map(graph.nodes.map((n, i) => [n.id, i])), [graph]);
+  // Resources with no connections say little in a network and crowd the
+  // clusters out of view: hidden unless asked for, searched or selected.
+  const [showLoners, setShowLoners] = useState(false);
+  const loners = useMemo(() => {
+    const linked = new Set(graph.edges.flatMap((e) => [e.source, e.target]));
+    return new Set(graph.nodes.filter((n) => !linked.has(n.id)).map((n) => n.id));
+  }, [graph]);
+  const wanted = (id: string | null | undefined) => !!id && loners.has(id);
+  const includeLoners =
+    showLoners || loners.size === graph.nodes.length || wanted(selected) || wanted(centerOn?.arn) || matches.some(wanted);
+  const shown = useMemo(
+    () => (includeLoners ? graph : { ...graph, nodes: graph.nodes.filter((n) => !loners.has(n.id)) }),
+    [graph, loners, includeLoners],
+  );
+  const positions = useMemo(() => networkLayout(shown.nodes, shown.edges), [shown]);
+  const index = useMemo(() => new Map(shown.nodes.map((n, i) => [n.id, i])), [shown]);
+  // Canvas size, to know whether unconnected resources' labels still fit.
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  // User zoom on top of the fit (ECharts series zoom, 1 = fitted).
+  const [zoom, setZoom] = useState(1);
+  // Shrunk to fit, the grid of unconnected resources' labels overlaps: draw
+  // those as dots (named in the tooltip) until there is room again.
+  const unlabeled = useMemo(
+    () =>
+      includeLoners && fitScale(positions, size.width, size.height) * zoom < 0.85
+        ? new Set([...loners].filter((id) => positions.has(id)))
+        : undefined,
+    [includeLoners, positions, size, zoom, loners],
+  );
 
   // Chart instance, events and resizing.
   const onSelectRef = useRef(onSelect);
@@ -62,11 +81,19 @@ export function NetworkGraph({ graph, short, selected, onSelect, matches, steps,
     c.on("click", (p) => {
       if (p.dataType === "node") onSelectRef.current((p.data as { id: string }).id);
     });
+    // Zooming in far enough brings hidden labels back.
+    c.on("graphRoam", () => {
+      const series = (c.getOption() as { series?: { zoom?: number }[] }).series;
+      setZoom(series?.[0]?.zoom ?? 1);
+    });
     // Clicking empty space clears the selection, as in the flow view.
     c.getZr().on("click", (e) => {
       if (!e.target) onSelectRef.current(null);
     });
-    const resize = new ResizeObserver(() => c.resize());
+    const resize = new ResizeObserver(([entry]) => {
+      c.resize();
+      setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
     resize.observe(el.current);
     return () => {
       resize.disconnect();
@@ -77,106 +104,57 @@ export function NetworkGraph({ graph, short, selected, onSelect, matches, steps,
 
   // Draw. Positions are fixed (layout "none"), so restyling never moves nodes.
   useEffect(() => {
-    const c = chart.current;
-    if (!c) return;
-    const text = cssVar("--text");
-    const muted = cssVar("--muted");
-    const edge = cssVar("--edge");
-    const accent = cssVar("--accent");
-    const warn = cssVar("--warn");
-    const surface = cssVar("--surface");
-    const costs = graph.nodes.map((n) => n.cost ?? 0);
-    const max = Math.max(1, ...costs);
-    const matched = new Set(matches);
-    const neighbors = new Set<string>();
-    if (selected) {
-      for (const e of graph.edges) {
-        if (e.source === selected) neighbors.add(e.target);
-        if (e.target === selected) neighbors.add(e.source);
-      }
-    }
-    const labelAll = graph.nodes.length < LABEL_ALL_BELOW;
-    c.setOption(
-      {
-        animation: false,
-        tooltip: {
-          confine: true,
-          formatter: (p: { dataType?: string; data: { node?: GraphNode } }) => {
-            const n = p.data.node;
-            if (p.dataType !== "node" || !n) return "";
-            const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
-            const cost = costLabel(n, graph.unit);
-            return `<b>${esc(n.label)}</b><br/>${esc(n.type_label)}${n.context ? " · connected, not a match" : ""}${
-              cost ? `<br/>${esc(cost)}` : ""
-            }`;
-          },
-        },
-        series: [
-          {
-            type: "graph",
-            layout: "none",
-            roam: true,
-            scaleLimit: { min: 0.05, max: 6 },
-            edgeSymbol: ["none", "arrow"],
-            edgeSymbolSize: 5,
-            label: { position: "right", fontSize: 11, color: text },
-            lineStyle: { color: edge, opacity: 0.7, width: 1, curveness: 0.12 },
-            emphasis: { disabled: true },
-            data: graph.nodes.map((n) => {
-              const p = positions.get(n.id) ?? { x: 0, y: 0 };
-              const step = steps.get(n.id);
-              const isSel = n.id === selected;
-              const faded = selected !== null && !isSel && !neighbors.has(n.id);
-              return {
-                id: n.id,
-                name: n.label,
-                node: n,
-                x: p.x,
-                y: p.y,
-                // Area grows with cost: radius ~ sqrt(cost).
-                symbolSize: n.cost ? 12 + 26 * Math.sqrt(n.cost / max) : 12,
-                itemStyle: {
-                  color: step !== undefined ? cssVar(`--cost-${step + 1}`) : n.context ? surface : muted,
-                  borderColor: isSel ? accent : matched.has(n.id) ? warn : n.context ? muted : surface,
-                  borderWidth: isSel || matched.has(n.id) ? 3 : 1,
-                  borderType: n.context ? "dashed" : "solid",
-                  opacity: faded ? 0.2 : n.context ? 0.6 : 1,
-                },
-                label: {
-                  show: labelAll || isSel || neighbors.has(n.id) || matched.has(n.id),
-                  formatter: `${short[n.resource_type] ?? "•"} ${n.label}`,
-                  opacity: faded ? 0.3 : 1,
-                },
-              };
-            }),
-            links: graph.edges.map((e) => {
-              const touches = selected !== null && (e.source === selected || e.target === selected);
-              return {
-                source: e.source,
-                target: e.target,
-                lineStyle: touches
-                  ? { color: accent, width: 2, opacity: 1 }
-                  : { opacity: selected !== null ? 0.15 : 0.7 },
-              };
-            }),
-          },
-        ],
-      },
-      // Merge (not replace) so zoom and pan survive selection changes.
-    );
-  }, [graph, positions, selected, matches, steps, short, dark]);
+    const colors: NetworkColors = {
+      text: cssVar("--text"),
+      muted: cssVar("--muted"),
+      edge: cssVar("--edge"),
+      accent: cssVar("--accent"),
+      warn: cssVar("--warn"),
+      surface: cssVar("--surface"),
+      cost: [1, 2, 3, 4, 5].map((i) => cssVar(`--cost-${i}`)),
+    };
+    // Merge (not replace) so zoom and pan survive selection changes.
+    chart.current?.setOption(networkOption(shown, positions, { selected, matches, steps, short, unlabeled }, colors));
+  }, [shown, positions, selected, matches, steps, short, unlabeled, dark]);
 
   // Fit the whole graph when it changes.
   useEffect(() => {
     chart.current?.setOption({ series: [{ center: null, zoom: 1 }] });
-  }, [graph]);
+    // Track the reset zoom after this frame (state isn't set during the effect).
+    const frame = requestAnimationFrame(() => setZoom(1));
+    return () => cancelAnimationFrame(frame);
+  }, [shown]);
 
   // Center on a resource (search, details links, assistant navigation).
   useEffect(() => {
     if (!centerOn || !index.has(centerOn.arn)) return;
     const p = positions.get(centerOn.arn);
-    if (p) chart.current?.setOption({ series: [{ center: [p.x, p.y], zoom: 2 }] });
+    if (!p) return;
+    chart.current?.setOption({ series: [{ center: [p.x, p.y], zoom: 2 }] });
+    const frame = requestAnimationFrame(() => setZoom(2));
+    return () => cancelAnimationFrame(frame);
   }, [centerOn, positions, index]);
 
-  return <div ref={el} className="network-canvas" role="img" aria-label="Resource network" />;
+  const hidden = includeLoners ? 0 : loners.size;
+  return (
+    <>
+      <div ref={el} className="network-canvas" role="img" aria-label="Resource network" />
+      {(hidden > 0 || (showLoners && loners.size < graph.nodes.length)) && (
+        <div className="network-loners">
+          {hidden > 0 ? (
+            <>
+              {hidden} {hidden === 1 ? "resource" : "resources"} with no connections hidden ·{" "}
+              <button className="link" onClick={() => setShowLoners(true)}>
+                Show
+              </button>
+            </>
+          ) : (
+            <button className="link" onClick={() => setShowLoners(false)}>
+              Hide resources with no connections
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
 }
