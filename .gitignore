@@ -1,0 +1,23 @@
+# Rust
+/target/
+**/target/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Tauri generated
+apps/desktop/src-tauri/gen/
+
+# Local data / secrets
+*.duckdb
+*.duckdb.wal
+.env
+.env.*
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store

@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Identity",
+      "Effect": "Allow",
+      "Action": ["sts:GetCallerIdentity"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Organizations",
+      "Effect": "Allow",
+      "Action": ["organizations:ListAccounts", "organizations:DescribeOrganization"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CostExplorer",
+      "Effect": "Allow",
+      "Action": ["ce:Get*", "ce:Describe*", "ce:List*"],
+      "Resource": "*"
+    }
+  ]
+}
