@@ -54,6 +54,7 @@ macro_rules! resource_types {
 
 const EC2: Option<&str> = Some("Amazon Elastic Compute Cloud - Compute");
 const EC2_OTHER: Option<&str> = Some("EC2 - Other");
+const LIGHTSAIL: Option<&str> = Some("Amazon Lightsail");
 
 resource_types! {
     CloudFrontDistribution => "cloudfront:distribution", "CloudFront distribution", Edge, Some("Amazon CloudFront");
@@ -81,6 +82,11 @@ resource_types! {
     Subnet => "ec2:subnet", "Subnet", Network, None;
     SecurityGroup => "ec2:security-group", "Security group", Network, None;
     NetworkInterface => "ec2:network-interface", "Network interface", Network, None;
+    LightsailLoadBalancer => "lightsail:loadbalancer", "Lightsail load balancer", Balancing, LIGHTSAIL;
+    LightsailInstance => "lightsail:instance", "Lightsail instance", Compute, LIGHTSAIL;
+    LightsailDisk => "lightsail:disk", "Lightsail disk", Storage, LIGHTSAIL;
+    LightsailDatabase => "lightsail:database", "Lightsail database", Data, LIGHTSAIL;
+    LightsailStaticIp => "lightsail:static-ip", "Lightsail static IP", Network, LIGHTSAIL;
 }
 
 impl ResourceType {

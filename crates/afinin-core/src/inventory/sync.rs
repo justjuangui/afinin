@@ -57,16 +57,28 @@ pub async fn sync_inventory(
         regions: regions.len(),
         ..Default::default()
     };
+    let home = regional(config, HOME_REGION);
+    let lightsail_regions = match collect::lightsail::regions(&home).await {
+        Ok(r) => r,
+        Err(e) => {
+            report.warnings.push(format!("lightsail: {e}"));
+            Vec::new()
+        }
+    };
     let mut scans: Vec<(String, Collected)> = futures::stream::iter(regions.iter().cloned())
         .map(|region| {
             let account = account.clone();
+            let lightsail = lightsail_regions.contains(&region);
             async move {
                 let cfg = regional(config, &region);
-                let found = collect::collect_region(&Ctx {
-                    config: &cfg,
-                    account: &account,
-                    region: &region,
-                })
+                let found = collect::collect_region(
+                    &Ctx {
+                        config: &cfg,
+                        account: &account,
+                        region: &region,
+                    },
+                    lightsail,
+                )
                 .await;
                 (region, found)
             }
@@ -74,7 +86,6 @@ pub async fn sync_inventory(
         .buffer_unordered(REGION_CONCURRENCY)
         .collect()
         .await;
-    let home = regional(config, HOME_REGION);
     let global = collect::collect_global(&Ctx {
         config: &home,
         account: &account,
