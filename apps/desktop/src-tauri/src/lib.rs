@@ -15,8 +15,9 @@ use afinin_core::{
     Resource,
 };
 use afinin_core::{
-    ContextRevision, CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights,
-    LlmLogEntry, ScreenContext, StoredContext, Turn, WorkspaceContext,
+    ContextRevision, ConversationSummary, CurConfig, CurStatus, CurValidation, Finding,
+    FindingStatus, Insights, LlmLogEntry, Rating, ScreenContext, StoredContext, StoredTurn, Turn,
+    WorkspaceContext,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -460,6 +461,44 @@ async fn ask(
 }
 
 #[tauri::command]
+fn assistant_conversations(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<Vec<ConversationSummary>> {
+    state.core()?.assistant_conversations(&workspace_id)
+}
+
+#[tauri::command]
+fn assistant_turns(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CmdResult<Vec<StoredTurn>> {
+    state.core()?.assistant_turns(&conversation_id)
+}
+
+#[tauri::command]
+fn rate_assistant_turn(
+    state: State<'_, AppState>,
+    turn_id: i64,
+    rating: Option<Rating>,
+    note: Option<String>,
+) -> CmdResult<()> {
+    state
+        .core()?
+        .rate_assistant_turn(turn_id, rating, note.as_deref())
+}
+
+#[tauri::command]
+fn delete_assistant_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CmdResult<()> {
+    state
+        .core()?
+        .delete_assistant_conversation(&conversation_id)
+}
+
+#[tauri::command]
 fn workspace_context(state: State<'_, AppState>, workspace_id: String) -> CmdResult<StoredContext> {
     state.core()?.workspace_context(&workspace_id)
 }
@@ -673,6 +712,10 @@ pub fn run() {
             has_llm_api_key,
             llm_log,
             clear_llm_log,
+            assistant_conversations,
+            assistant_turns,
+            rate_assistant_turn,
+            delete_assistant_conversation,
             workspace_context,
             save_workspace_context,
             workspace_context_history,

@@ -516,6 +516,13 @@ table.compact td { padding: 5px 4px; font-size: 13px; }
 .msg.assistant { align-self: stretch; }
 .msg-meta { margin-top: 4px; }
 .assumptions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.feedback { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.feedback-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.feedback-buttons button { border: 1px solid var(--border); }
+.feedback-buttons button.active { background: var(--accent-soft); border-color: var(--accent); }
+.feedback-note { display: flex; gap: 6px; align-items: center; }
+.feedback-note input { margin-top: 0; }
+table.history td { vertical-align: top; }
 .nav-links { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 6px; }
 .nav-links button { border: 1px solid var(--border); text-align: left; }
 .assumptions span { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--text); }

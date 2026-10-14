@@ -11,6 +11,7 @@ import type {
   Application,
   AwsProfile,
   ContextRevision,
+  ConversationSummary,
   CostComparisonRow,
   CostMetric,
   CostOverview,
@@ -30,11 +31,13 @@ import type {
   InventoryFacets,
   InventoryScan,
   LlmLogEntry,
+  Rating,
   ScreenContext,
   Settings,
   SsoLoginPrompt,
   SsoLoginStatus,
   StoredContext,
+  StoredTurn,
   Turn,
   Workspace,
   WorkspaceContext,
@@ -107,6 +110,13 @@ export const api = {
   hasLlmApiKey: () => invoke<boolean>("has_llm_api_key"),
   llmLog: (workspaceId: string) => invoke<LlmLogEntry[]>("llm_log", { workspaceId }),
   clearLlmLog: (workspaceId: string) => invoke<void>("clear_llm_log", { workspaceId }),
+  assistantConversations: (workspaceId: string) =>
+    invoke<ConversationSummary[]>("assistant_conversations", { workspaceId }),
+  assistantTurns: (conversationId: string) => invoke<StoredTurn[]>("assistant_turns", { conversationId }),
+  rateAssistantTurn: (turnId: number, rating: Rating | null, note: string | null) =>
+    invoke<void>("rate_assistant_turn", { turnId, rating, note }),
+  deleteAssistantConversation: (conversationId: string) =>
+    invoke<void>("delete_assistant_conversation", { conversationId }),
   workspaceContext: (workspaceId: string) => invoke<StoredContext>("workspace_context", { workspaceId }),
   saveWorkspaceContext: (workspaceId: string, context: WorkspaceContext) =>
     invoke<StoredContext>("save_workspace_context", { workspaceId, context }),

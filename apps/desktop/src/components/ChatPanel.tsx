@@ -3,14 +3,26 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { navLinks } from "../assistantNav";
-import type { AssistantProgress, Citation, LlmLogEntry, NavTarget, ScreenContext, Turn } from "../types";
+import { relativeTime } from "../format";
+import type {
+  AssistantProgress,
+  Citation,
+  ConversationSummary,
+  LlmLogEntry,
+  NavTarget,
+  Rating,
+  ScreenContext,
+  Turn,
+} from "../types";
 import { Callout } from "./Callout";
-import { Modal } from "./Modal";
+import { ConfirmDialog, Modal } from "./Modal";
 
 interface Entry {
   role: "user" | "assistant";
   text: string;
   turn?: Turn;
+  rating?: Rating | null;
+  ratingNote?: string | null;
 }
 
 interface Props {
@@ -115,6 +127,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
   const [error, setError] = useState<string | null>(null);
   const [citation, setCitation] = useState<Citation | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [steps, setSteps] = useState<string[]>([]);
   const [hasContext, setHasContext] = useState(true);
   const [hintDismissed, setHintDismissed] = useState(() => contextHintDismissed(workspaceId));
@@ -178,6 +191,9 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
       <header>
         <h2>Assistant</h2>
         <div className="actions">
+          <button className="ghost small" onClick={() => setShowHistory(true)} disabled={busy} title="Earlier conversations">
+            History
+          </button>
           <button className="ghost small" onClick={() => setShowLog(true)} title="Every request sent to the model">
             Show what was sent
           </button>
@@ -266,9 +282,20 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
                     ))}
                   </div>
                 )}
+                {e.turn?.turn_id != null && (
+                  <AnswerFeedback
+                    turnId={e.turn.turn_id}
+                    rating={e.rating ?? null}
+                    note={e.ratingNote ?? null}
+                    onRated={(rating, ratingNote) =>
+                      setEntries((list) => list.map((x) => (x === e ? { ...x, rating, ratingNote } : x)))
+                    }
+                  />
+                )}
                 {e.turn && (
                   <div className="msg-meta muted small">
                     {e.turn.model}
+                    {e.turn.data_as_of && ` · data as of ${relativeTime(e.turn.data_as_of)}`}
                     {e.turn.context_revision > 0 && ` · workspace context r${e.turn.context_revision}`}
                     {e.turn.redacted ? ` · ${e.turn.masked_values} identifiers masked` : " · not redacted (local model)"}
                     {e.turn.citations.length > 0 && ` · ${e.turn.citations.length} data source(s)`}
@@ -347,6 +374,41 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
           <pre className="code tall">{JSON.stringify(citation.result, null, 2)}</pre>
         </Modal>
       )}
+      {showHistory && (
+        <HistoryDialog
+          workspaceId={workspaceId}
+          current={conversation}
+          onClose={() => setShowHistory(false)}
+          onDeleted={(id) => {
+            if (id === conversation) {
+              setEntries([]);
+              setConversation(null);
+            }
+          }}
+          onOpen={(id) => {
+            setShowHistory(false);
+            setError(null);
+            api.assistantTurns(id).then(
+              (turns) => {
+                setConversation(id);
+                setEntries(
+                  turns.flatMap((t): Entry[] => [
+                    { role: "user", text: t.question },
+                    {
+                      role: "assistant",
+                      text: t.turn.answer,
+                      turn: { ...t.turn, turn_id: t.id },
+                      rating: t.rating,
+                      ratingNote: t.rating_note,
+                    },
+                  ]),
+                );
+              },
+              (e) => setError(errorMessage(e)),
+            );
+          }}
+        />
+      )}
       {showLog && <LlmLogDialog workspaceId={workspaceId} onClose={() => setShowLog(false)} />}
     </aside>
   );
@@ -420,6 +482,167 @@ function LlmLogDialog({ workspaceId, onClose }: { workspaceId: string; onClose: 
           </li>
         ))}
       </ul>
+    </Modal>
+  );
+}
+
+function AnswerFeedback({
+  turnId,
+  rating,
+  note,
+  onRated,
+}: {
+  turnId: number;
+  rating: Rating | null;
+  note: string | null;
+  onRated: (rating: Rating | null, note: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(note ?? "");
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const rate = async (next: Rating | null, nextNote: string | null) => {
+    try {
+      await api.rateAssistantTurn(turnId, next, nextNote);
+      onRated(next, nextNote);
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
+  return (
+    <div className="feedback">
+      <div className="feedback-buttons" role="group" aria-label="Rate this answer">
+        <button
+          className={`ghost small${rating === "up" ? " active" : ""}`}
+          aria-pressed={rating === "up"}
+          onClick={() => void rate(rating === "up" ? null : "up", null)}
+        >
+          Useful
+        </button>
+        <button
+          className={`ghost small${rating === "down" ? " active" : ""}`}
+          aria-pressed={rating === "down"}
+          onClick={() => {
+            if (rating === "down") {
+              setEditing(false);
+              void rate(null, null);
+            } else {
+              setEditing(true);
+              void rate("down", null);
+            }
+          }}
+        >
+          Not right
+        </button>
+        {rating === "down" && note && !editing && <span className="muted small">“{note}”</span>}
+      </div>
+      {rating === "down" && editing && (
+        <form
+          className="feedback-note"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setEditing(false);
+            void rate("down", draft.trim() || null);
+          }}
+        >
+          <input
+            autoFocus
+            aria-label="What was wrong"
+            placeholder="What was wrong? (optional, kept locally)"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button className="ghost small">Save</button>
+        </form>
+      )}
+      {error && <span className="error small">{error}</span>}
+    </div>
+  );
+}
+
+function HistoryDialog({
+  workspaceId,
+  current,
+  onOpen,
+  onDeleted,
+  onClose,
+}: {
+  workspaceId: string;
+  current: string | null;
+  onOpen: (id: string) => void;
+  onDeleted: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [list, setList] = useState<ConversationSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<ConversationSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.assistantConversations(workspaceId).then(
+      (l) => !cancelled && setList(l),
+      (e) => !cancelled && setError(errorMessage(e)),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  const remove = async (c: ConversationSummary) => {
+    setDeleting(null);
+    try {
+      await api.deleteAssistantConversation(c.id);
+      setList((l) => l?.filter((x) => x.id !== c.id) ?? null);
+      onDeleted(c.id);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
+  return (
+    <Modal title="Conversations" onClose={onClose}>
+      {error && (
+        <Callout tone="danger" title="Couldn’t load conversations">
+          {error}
+        </Callout>
+      )}
+      <p className="muted small">Saved in Afinín&apos;s encrypted local database, per workspace.</p>
+      {list?.length === 0 && <p className="muted">No conversations yet.</p>}
+      {list && list.length > 0 && (
+        <table className="breakdown history">
+          <tbody>
+            {list.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <button className="link" onClick={() => onOpen(c.id)}>
+                    {c.title}
+                  </button>
+                  {c.id === current && <span className="badge ok">open</span>}
+                  <div className="muted small">
+                    {c.turns} {c.turns === 1 ? "question" : "questions"} · {relativeTime(c.updated_at)}
+                  </div>
+                </td>
+                <td className="num">
+                  <button className="ghost small danger" onClick={() => setDeleting(c)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="Delete conversation"
+          message={`Delete “${deleting.title}” and its ${deleting.turns} saved answers and ratings? The request log is kept.`}
+          confirmLabel="Delete"
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => void remove(deleting)}
+        />
+      )}
     </Modal>
   );
 }
