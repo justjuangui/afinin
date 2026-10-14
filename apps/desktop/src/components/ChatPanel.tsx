@@ -242,6 +242,14 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
             ) : (
               <>
                 <Markdown text={e.text} onCite={(n) => setCitation(citations.get(n) ?? null)} />
+                {e.turn && e.turn.unverified_figures.length > 0 && (
+                  <Callout tone="warn" title="Some figures don’t match the data">
+                    {e.turn.unverified_figures.join(", ")}{" "}
+                    {e.turn.unverified_figures.length === 1 ? "isn’t" : "aren’t"} in any source the assistant used. It may
+                    have calculated or misread {e.turn.unverified_figures.length === 1 ? "it" : "them"}; check the cited
+                    sources before relying on {e.turn.unverified_figures.length === 1 ? "it" : "them"}.
+                  </Callout>
+                )}
                 {e.turn && e.turn.assumptions.length > 0 && (
                   <div className="assumptions" aria-label="Assumptions">
                     {e.turn.assumptions.map((a) => (

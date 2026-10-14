@@ -49,6 +49,9 @@ pub struct Turn {
     pub assumptions: Vec<String>,
     /// Workspace context revision included in the request (0 = none).
     pub context_revision: i64,
+    /// Figures in the answer that match nothing in the data, the question
+    /// or the workspace context.
+    pub unverified_figures: Vec<String>,
 }
 
 /// What the agent is doing, for progress display.
@@ -201,6 +204,7 @@ pub async fn run_turn(
                 output_tokens,
                 assumptions: Vec::new(),
                 context_revision: 0,
+                unverified_figures: Vec::new(),
             });
         }
 
@@ -255,6 +259,7 @@ pub async fn run_turn(
         output_tokens,
         assumptions: Vec::new(),
         context_revision: 0,
+        unverified_figures: Vec::new(),
     })
 }
 
