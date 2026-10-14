@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Callout } from "./Callout";
 
 interface State {
   error: Error | null;
@@ -23,10 +24,15 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return (
       <main className="fatal">
         <h1>Something went wrong</h1>
-        <p className="error">{this.state.error.message}</p>
-        <button className="primary" onClick={() => this.setState({ error: null })}>
-          Try again
-        </button>
+        <Callout
+          tone="danger"
+          title={this.state.error.message}
+          actions={
+            <button className="primary small" onClick={() => this.setState({ error: null })}>
+              Try again
+            </button>
+          }
+        />
       </main>
     );
   }

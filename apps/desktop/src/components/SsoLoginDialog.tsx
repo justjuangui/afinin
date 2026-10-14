@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { SsoLoginPrompt } from "../types";
 import { Modal } from "./Modal";
+import { Callout } from "./Callout";
 
 interface Props {
   profile: string;
@@ -52,7 +53,9 @@ export function SsoLoginDialog({ profile, onClose, onComplete }: Props) {
   return (
     <Modal title="Sign in with IAM Identity Center" onClose={onClose}>
       {error ? (
-        <p className="error">{error}</p>
+        <Callout tone="danger" title="Sign-in failed">
+          {error}
+        </Callout>
       ) : !prompt ? (
         <p className="muted">Contacting AWS…</p>
       ) : (

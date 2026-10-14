@@ -8,6 +8,7 @@ import { WorkspaceView } from "./components/WorkspaceView";
 import { Onboarding } from "./components/Onboarding";
 import { SettingsView } from "./components/SettingsView";
 import { applyTheme } from "./theme";
+import { Callout } from "./components/Callout";
 
 export default function App() {
   const [startupError, setStartupError] = useState<string | null>(null);
@@ -54,17 +55,24 @@ export default function App() {
     return (
       <main className="fatal">
         <h1>Afinín could not open its local data</h1>
-        <p className="error">{startupError}</p>
-        <p className="muted">
-          Afinín stores its database key in the OS keychain. On Linux, make sure a Secret
-          Service provider (GNOME Keyring or KWallet) is running and unlocked.
-        </p>
+        <Callout tone="danger" title={startupError}>
+          Afinín stores its database key in the OS keychain. On Linux, make sure a Secret Service provider (GNOME
+          Keyring or KWallet) is running and unlocked.
+        </Callout>
       </main>
     );
   }
 
   if (workspaces === null || settings === null) {
-    return <main className="loading">{error ?? "Loading…"}</main>;
+    return error ? (
+      <main className="fatal">
+        <Callout tone="danger" title="Afinín couldn’t load your workspaces">
+          {error}
+        </Callout>
+      </main>
+    ) : (
+      <main className="loading">Loading…</main>
+    );
   }
 
   if (workspaces.length === 0) {
@@ -73,31 +81,46 @@ export default function App() {
 
   const selected = workspaces.find((w) => w.id === selectedId) ?? workspaces[0];
 
-  const banner = update && (
-    <div className="update-banner" role="status">
-      Afinín {update.version} is available.
-      <button
-        className="primary small"
-        disabled={installing}
-        onClick={() => {
-          setInstalling(true);
-          api.installUpdate().catch((e) => {
-            setError(errorMessage(e));
-            setInstalling(false);
-          });
-        }}
-      >
-        {installing ? "Installing…" : "Install and restart"}
-      </button>
-      <button className="ghost small" onClick={() => setUpdate(null)}>
-        Later
-      </button>
+  // App-level messages float above the layout. Errors after startup (reload,
+  // update install) used to be stored but never shown.
+  const toasts = (update || error) && (
+    <div className="toasts">
+      {error && (
+        <Callout tone="danger" title="Something went wrong" onDismiss={() => setError(null)} dismissLabel="Dismiss">
+          {error}
+        </Callout>
+      )}
+      {update && (
+        <Callout
+          tone="action"
+          title={`Afinín ${update.version} is available`}
+          actions={
+            <button
+              className="primary small"
+              disabled={installing}
+              onClick={() => {
+                setInstalling(true);
+                api.installUpdate().catch((e) => {
+                  setError(errorMessage(e));
+                  setInstalling(false);
+                });
+              }}
+            >
+              {installing ? "Installing…" : "Install and restart"}
+            </button>
+          }
+          onDismiss={() => setUpdate(null)}
+          dismissLabel="Later"
+        >
+          Afinín restarts to finish the update.
+        </Callout>
+      )}
     </div>
   );
 
   return (
     <div className="layout">
-      {banner}
+      {toasts}
       <Sidebar
         workspaces={workspaces}
         selectedId={view === "workspace" ? selected.id : null}

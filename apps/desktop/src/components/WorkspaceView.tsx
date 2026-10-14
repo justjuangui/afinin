@@ -12,6 +12,7 @@ import { CostDashboard } from "./CostDashboard";
 import { InventoryView } from "./InventoryView";
 import { FindingsView } from "./FindingsView";
 import { ChatPanel } from "./ChatPanel";
+import { Callout } from "./Callout";
 import { CurSetupDialog } from "./CurSetupDialog";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
@@ -198,9 +199,9 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
       </header>
 
       {error && (
-        <p className="error banner" onClick={() => setError(null)} title="Dismiss">
+        <Callout tone="danger" title="Something went wrong" onDismiss={() => setError(null)} dismissLabel="Dismiss">
           {error}
-        </p>
+        </Callout>
       )}
 
       {accounts === null ? null : list.length === 0 ? (

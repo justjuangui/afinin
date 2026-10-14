@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { Account, CurConfig, CurValidation } from "../types";
+import { Callout } from "./Callout";
 import { DocsLink } from "./DocsLink";
 import { Modal } from "./Modal";
 
@@ -125,7 +126,11 @@ export function CurSetupDialog({ account, onClose, onSaved }: Props) {
         )
       }
     >
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Callout tone="danger" title="CUR setup failed">
+          {error}
+        </Callout>
+      )}
       {step === 1 ? (
         <div className="stack">
           <p>
@@ -194,12 +199,17 @@ export function CurSetupDialog({ account, onClose, onSaved }: Props) {
             </ul>
           )}
           {detected && differs && (
-            <div className="callout">
-              The export delivers to <code>s3://{detected.bucket}/{detected.prefix}</code> in <code>{detected.region}</code>.
-              <button className="ghost" onClick={() => update(detected)}>
-                Use these settings
-              </button>
-            </div>
+            <Callout
+              tone="action"
+              title="The export delivers somewhere else"
+              actions={
+                <button className="primary small" onClick={() => update(detected)}>
+                  Use these settings
+                </button>
+              }
+            >
+              It writes to <code>s3://{detected.bucket}/{detected.prefix}</code> in <code>{detected.region}</code>.
+            </Callout>
           )}
           {!validation && <p className="muted small">Check the settings before saving.</p>}
         </div>

@@ -5,6 +5,7 @@ import { api, errorMessage } from "../api";
 import { money } from "../format";
 import { ConfirmDialog } from "./Modal";
 import type { Account, ApiUsage, CostMetric, LlmSettings, ProviderKind, Settings } from "../types";
+import { Callout } from "./Callout";
 
 const PROVIDERS: { id: ProviderKind; label: string }[] = [
   { id: "none", label: "None (assistant off)" },
@@ -372,7 +373,11 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
             </select>
           </label>
 
-          {error && <p className="error">{error}</p>}
+          {error && (
+            <Callout tone="danger" title="Something went wrong">
+              {error}
+            </Callout>
+          )}
           <div className="form-actions">
             {status && <span className="status ok">{status}</span>}
             <button className="primary">Save settings</button>

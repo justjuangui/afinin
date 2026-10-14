@@ -5,6 +5,7 @@ import { api, errorMessage } from "../api";
 import { addDays, todayUtc } from "../dates";
 import { money, percent } from "../format";
 import type { Finding, FindingKind, Insights, Severity } from "../types";
+import { Callout } from "./Callout";
 
 const SEVERITY: Record<Severity, { label: string; icon: string }> = {
   high: { label: "High", icon: "▲" },
@@ -68,9 +69,9 @@ export function FindingsView({ workspaceId, dataVersion, onExplain }: Props) {
   return (
     <div className="findings">
       {error && (
-        <p className="error banner" onClick={() => setError(null)} title="Dismiss">
+        <Callout tone="danger" title="Couldn’t load or update findings" onDismiss={() => setError(null)} dismissLabel="Dismiss">
           {error}
-        </p>
+        </Callout>
       )}
       <section className="kpis">
         <div className="kpi">
