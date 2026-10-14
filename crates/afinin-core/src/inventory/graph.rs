@@ -70,9 +70,11 @@ pub struct GraphNode {
     pub vpc_id: Option<String>,
     pub tags: BTreeMap<String, String>,
     pub attrs: BTreeMap<String, serde_json::Value>,
-    /// Monthly cost of this resource's service in its account (no CUR), or of
-    /// the resource itself (CUR, M3). See [`Graph::cost_basis`].
+    /// Monthly cost of this resource's service in its account (no CUR), of
+    /// the resource itself (CUR, M3) or its list price; see `cost_basis`.
     pub cost: Option<f64>,
+    /// What `cost` is; `None` when there is no cost.
+    pub cost_basis: Option<CostBasis>,
     /// Included only as context for a filtered match.
     pub context: bool,
 }
@@ -91,6 +93,8 @@ pub enum CostBasis {
     Service,
     /// CUR: the resource's own cost.
     Resource,
+    /// The resource's monthly list price (Lightsail bundles).
+    ListPrice,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -111,6 +115,37 @@ pub struct CostOverlay {
     /// ARN (or native resource ID) → cost, from CUR.
     pub by_resource: HashMap<String, f64>,
     pub unit: String,
+}
+
+/// A resource's cost and what it is: its own (CUR), else its list price,
+/// else its service total in the account. Lightsail resources never take the
+/// service total: one Lightsail bill on every instance and IP misleads.
+fn node_cost(r: &Resource, basis: CostBasis, costs: &CostOverlay) -> Option<(f64, CostBasis)> {
+    let own = (basis == CostBasis::Resource)
+        .then(|| {
+            costs
+                .by_resource
+                .get(&r.arn)
+                .or_else(|| costs.by_resource.get(&r.native_id))
+        })
+        .flatten()
+        .map(|c| (*c, CostBasis::Resource));
+    let list = || {
+        r.attrs
+            .get("monthly_price_usd")
+            .and_then(serde_json::Value::as_f64)
+            .map(|c| (c, CostBasis::ListPrice))
+    };
+    let service = || {
+        if basis == CostBasis::Resource || r.resource_type.is_lightsail() {
+            return None;
+        }
+        r.resource_type
+            .cost_service()
+            .and_then(|s| costs.by_service.get(&(r.account_id.clone(), s.to_owned())))
+            .map(|c| (*c, CostBasis::Service))
+    };
+    own.or_else(list).or_else(service)
 }
 
 /// Resolved, de-duplicated edges between existing resources.
@@ -204,18 +239,8 @@ pub fn build(
             vpc_id: r.vpc_id().map(str::to_owned),
             tags: r.tags.clone(),
             attrs: r.attrs.clone(),
-            cost: match cost_basis {
-                CostBasis::Resource => costs
-                    .by_resource
-                    .get(&r.arn)
-                    .or_else(|| costs.by_resource.get(&r.native_id))
-                    .copied(),
-                CostBasis::Service => r
-                    .resource_type
-                    .cost_service()
-                    .and_then(|s| costs.by_service.get(&(r.account_id.clone(), s.to_owned())))
-                    .copied(),
-            },
+            cost: node_cost(r, cost_basis, costs).map(|(c, _)| c),
+            cost_basis: node_cost(r, cost_basis, costs).map(|(_, b)| b),
             context: !matched.contains(r.arn.as_str()),
         })
         .collect();
@@ -547,6 +572,50 @@ mod tests {
             &CostOverlay::default(),
         );
         assert!(vpc.nodes.iter().any(|n| n.native_id == "E1" && n.context));
+    }
+
+    #[test]
+    fn lightsail_uses_list_prices_not_the_service_total() {
+        let ls = |t: ResourceType, name: &str, price: Option<f64>| {
+            let mut r = Resource::new(
+                t,
+                format!("arn:aws:lightsail:us-east-1:{A}:{name}"),
+                A,
+                "us-east-1",
+                name,
+            );
+            r.attr("monthly_price_usd", price.map(|p| serde_json::json!(p)));
+            r
+        };
+        let resources = vec![
+            ls(ResourceType::LightsailInstance, "web", Some(10.0)),
+            ls(ResourceType::LightsailStaticIp, "ip-attached", Some(0.0)),
+            ls(ResourceType::LightsailDisk, "data", None),
+            Resource::new(
+                ResourceType::Ec2Instance,
+                "arn:aws:ec2:us-east-1:1:instance/i-9",
+                A,
+                "us-east-1",
+                "i-9",
+            ),
+        ];
+        let mut costs = CostOverlay::default();
+        costs
+            .by_service
+            .insert((A.into(), "Amazon Lightsail".into()), 554.9);
+        costs.by_service.insert(
+            (A.into(), "Amazon Elastic Compute Cloud - Compute".into()),
+            250.0,
+        );
+        let g = build(&resources, &[], &GraphFilter::default(), &costs);
+        let cost = |id: &str| {
+            let n = g.nodes.iter().find(|n| n.native_id == id).unwrap();
+            (n.cost, n.cost_basis)
+        };
+        assert_eq!(cost("web"), (Some(10.0), Some(CostBasis::ListPrice)));
+        assert_eq!(cost("ip-attached"), (Some(0.0), Some(CostBasis::ListPrice)));
+        assert_eq!(cost("data"), (None, None), "never the whole Lightsail bill");
+        assert_eq!(cost("i-9"), (Some(250.0), Some(CostBasis::Service)));
     }
 
     #[test]

@@ -103,6 +103,17 @@ impl ResourceType {
     pub fn is_bulk(self) -> bool {
         matches!(self, Self::EbsSnapshot)
     }
+
+    pub fn is_lightsail(self) -> bool {
+        matches!(
+            self,
+            Self::LightsailInstance
+                | Self::LightsailDatabase
+                | Self::LightsailLoadBalancer
+                | Self::LightsailDisk
+                | Self::LightsailStaticIp
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

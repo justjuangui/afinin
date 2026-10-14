@@ -21,6 +21,7 @@ import { NODE_H, NODE_W, layout } from "../graphLayout";
 import type {
   Application,
   ContextEntry,
+  CostBasis,
   Facet,
   Graph,
   GraphEdge,
@@ -77,6 +78,18 @@ const KIND_LABEL: Record<RelationKind, string> = {
   owns: "owns",
 };
 
+const BASIS_LABEL: Record<CostBasis, string> = {
+  resource: "Resource cost, 30 days",
+  service: "Service cost per account, 30 days",
+  list_price: "List price per month",
+};
+
+/** Legend for the cost overlay: one label, or the mix of what nodes show. */
+function legendLabel(nodes: GraphNode[]): string {
+  const bases = [...new Set(nodes.map((n) => n.cost_basis).filter((b): b is CostBasis => b !== null))];
+  return bases.length === 1 ? BASIS_LABEL[bases[0]] : `Cost: ${bases.map((b) => BASIS_LABEL[b].toLowerCase()).join(" · ")}`;
+}
+
 /** Sequential single-hue ramp for the cost overlay (low → high), per theme. */
 const COST_STEPS = 5;
 
@@ -120,7 +133,12 @@ const ResourceNode = memo(function ResourceNode({ data, selected }: NodeProps<No
           {state ? ` · ${state}` : ""}
         </span>
       </span>
-      {node.cost !== null && <span className="rnode-money">{money(node.cost, unit, true)}</span>}
+      {node.cost !== null && (
+        <span className="rnode-money" title={node.cost_basis === "list_price" ? "List price per month" : undefined}>
+          {money(node.cost, unit, true)}
+          {node.cost_basis === "list_price" && "/mo"}
+        </span>
+      )}
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>
   );
@@ -547,7 +565,7 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
             </ReactFlow>
             {overlay && graph && graph.nodes.some((n) => n.cost !== null) && (
               <div className="legend-overlay">
-                <span>{graph.cost_basis === "service" ? "Service cost per account, 30 days" : "Resource cost, 30 days"}</span>
+                <span>{legendLabel(graph.nodes)}</span>
                 <span className="ramp">
                   {Array.from({ length: COST_STEPS }, (_, i) => (
                     <span key={i} style={{ background: `var(--cost-${i + 1})` }} />
@@ -639,16 +657,35 @@ function Details({
             </dd>
           </>
         )}
-        {node.cost !== null && (
+        {node.cost !== null && node.cost_basis === "list_price" ? (
           <>
-            <dt>{graph.cost_basis === "service" ? "Service cost" : "Cost"}</dt>
+            <dt>List price</dt>
+            <dd>
+              {node.cost === 0 ? "Included" : money(node.cost, "USD")}{" "}
+              <span className="muted small">{node.cost === 0 ? "while attached to an instance" : "per month"}</span>
+              <div className="muted small">Lightsail’s published price, not measured spend. Actual cost needs CUR.</div>
+            </dd>
+          </>
+        ) : node.cost !== null ? (
+          <>
+            <dt>{node.cost_basis === "service" ? "Service cost" : "Cost"}</dt>
             <dd>
               {money(node.cost, graph.unit)} <span className="muted small">last 30 days</span>
-              {graph.cost_basis === "service" && (
+              {node.cost_basis === "service" && (
                 <div className="muted small">Whole service in this account. Per-resource cost needs CUR.</div>
               )}
             </dd>
           </>
+        ) : (
+          node.resource_type.startsWith("lightsail:") && (
+            <>
+              <dt>Cost</dt>
+              <dd className="muted small">
+                No list price for this Lightsail resource. The service total isn’t shown here because it covers every
+                Lightsail resource in the account; per-resource cost needs CUR.
+              </dd>
+            </>
+          )
         )}
       </dl>
 

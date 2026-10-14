@@ -189,6 +189,8 @@ export type RelationKind =
   | "member_of"
   | "owns";
 
+export type CostBasis = "service" | "resource" | "list_price";
+
 export interface GraphNode {
   id: string;
   resource_type: string;
@@ -202,6 +204,8 @@ export interface GraphNode {
   tags: Record<string, string>;
   attrs: Record<string, unknown>;
   cost: number | null;
+  /** What `cost` is: CUR, a list price (Lightsail bundles) or the service total. */
+  cost_basis: CostBasis | null;
   context: boolean;
 }
 
