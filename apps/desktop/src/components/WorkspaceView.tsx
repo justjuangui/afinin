@@ -14,12 +14,19 @@ import { FindingsView } from "./FindingsView";
 import { ChatPanel } from "./ChatPanel";
 import { Callout } from "./Callout";
 import { CurSetupDialog } from "./CurSetupDialog";
+import { ContextView } from "./ContextView";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
 
-type Tab = "costs" | "findings" | "inventory" | "accounts";
+type Tab = "costs" | "findings" | "inventory" | "accounts" | "context";
 
-const TAB_LABEL: Record<Tab, string> = { costs: "Costs", findings: "Findings", inventory: "Inventory", accounts: "Accounts" };
+const TAB_LABEL: Record<Tab, string> = {
+  costs: "Costs",
+  findings: "Findings",
+  inventory: "Inventory",
+  accounts: "Accounts",
+  context: "Context",
+};
 
 interface Props {
   workspace: Workspace;
@@ -216,7 +223,7 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
       ) : (
         <>
           <nav className="tabs" role="tablist">
-            {(["costs", "findings", "inventory", "accounts"] as Tab[]).map((t) => (
+            {(["costs", "findings", "inventory", "accounts", "context"] as Tab[]).map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
                 {TAB_LABEL[t]}
                 {t === "accounts" && failedSyncs > 0 && <span className="badge warn">{failedSyncs} failed</span>}
@@ -246,6 +253,8 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
               syncing={syncing}
               onExplain={explain}
             />
+          ) : tab === "context" ? (
+            <ContextView key={workspace.id} workspaceId={workspace.id} costTagKeys={settings.cost_tag_keys} />
           ) : (
             <table className="accounts">
               <thead>
@@ -328,6 +337,7 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
           prompt={chatPrompt}
           onClose={() => setChatOpen(false)}
           onOpenSettings={onOpenSettings}
+          onOpenContext={() => setTab("context")}
         />
       )}
 

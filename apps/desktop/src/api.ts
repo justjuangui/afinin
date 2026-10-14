@@ -5,34 +5,38 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Account,
+  AccountSyncReport,
   ApiUsage,
+  AssistantProgress,
+  Application,
   AwsProfile,
+  ContextRevision,
   CostComparisonRow,
   CostMetric,
   CostOverview,
   CostQuery,
   CostSeries,
-  DimensionValue,
-  GroupBy,
-  AccountSyncReport,
   CurConfig,
   CurStatus,
   CurValidation,
+  DimensionValue,
+  Facet,
   Finding,
   FindingStatus,
-  Insights,
-  LlmLogEntry,
-  Turn,
-  Application,
-  Facet,
   Graph,
   GraphFilter,
+  GroupBy,
+  Insights,
   InventoryFacets,
   InventoryScan,
+  LlmLogEntry,
   Settings,
   SsoLoginPrompt,
   SsoLoginStatus,
+  StoredContext,
+  Turn,
   Workspace,
+  WorkspaceContext,
 } from "./types";
 
 export const api = {
@@ -65,6 +69,9 @@ export const api = {
   /** Fires with an account id whenever its sync starts or ends. */
   onSyncChanged: (cb: (accountId: string) => void): Promise<UnlistenFn> =>
     listen<string>("sync-changed", (e) => cb(e.payload)),
+  /** Fires for each model call and tool call while the assistant answers. */
+  onAssistantProgress: (cb: (p: AssistantProgress) => void): Promise<UnlistenFn> =>
+    listen<AssistantProgress>("assistant-progress", (e) => cb(e.payload)),
 
   costOverview: (workspaceId: string, metric: CostMetric, linkedAccounts: string[]) =>
     invoke<CostOverview>("cost_overview", { workspaceId, metric, linkedAccounts }),
@@ -99,6 +106,11 @@ export const api = {
   hasLlmApiKey: () => invoke<boolean>("has_llm_api_key"),
   llmLog: (workspaceId: string) => invoke<LlmLogEntry[]>("llm_log", { workspaceId }),
   clearLlmLog: (workspaceId: string) => invoke<void>("clear_llm_log", { workspaceId }),
+  workspaceContext: (workspaceId: string) => invoke<StoredContext>("workspace_context", { workspaceId }),
+  saveWorkspaceContext: (workspaceId: string, context: WorkspaceContext) =>
+    invoke<StoredContext>("save_workspace_context", { workspaceId, context }),
+  workspaceContextHistory: (workspaceId: string) =>
+    invoke<ContextRevision[]>("workspace_context_history", { workspaceId }),
   exportBackup: (password: string) => invoke<boolean>("export_backup", { password }),
   importBackup: (password: string) => invoke<boolean>("import_backup", { password }),
   checkUpdate: () => invoke<{ version: string; notes: string | null } | null>("check_update"),

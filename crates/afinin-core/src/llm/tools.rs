@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 
 use super::ToolSpec;
+use super::agent::Citation;
 use crate::Afinin;
 use crate::cost::{CostFilter, CostMetric, CostQuery, Granularity, GroupBy, dates};
 use crate::error::{Error, Result};
@@ -23,7 +24,7 @@ fn common_cost_props() -> serde_json::Map<String, Value> {
     let v = json!({
         "group_by": group_by_schema(),
         "tag_key": {"type": "string", "description": "Cost allocation tag key when group_by is `tag`."},
-        "metric": {"type": "string", "enum": ["unblended", "amortized", "net_unblended"], "description": "Default unblended."},
+        "metric": {"type": "string", "enum": ["unblended", "amortized", "net_unblended"], "description": "Defaults to the workspace's default metric."},
         "account_ids": {"type": "array", "items": {"type": "string"}, "description": "Only these AWS account IDs."},
         "services": {"type": "array", "items": {"type": "string"}, "description": "Only these services (Cost Explorer names); with Cost Explorer data only when grouping by service or account."},
         "top_n": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Groups to return; the rest is summed as other. Default 10."}
@@ -144,7 +145,13 @@ fn round(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
-fn cost_query(workspace_id: &str, input: &Value, start: &str, end: &str) -> Result<CostQuery> {
+fn cost_query(
+    workspace_id: &str,
+    input: &Value,
+    start: &str,
+    end: &str,
+    default_metric: CostMetric,
+) -> Result<CostQuery> {
     let group_by = match str_arg(input, "group_by")? {
         "service" => GroupBy::Service,
         "account" => GroupBy::Account,
@@ -154,10 +161,12 @@ fn cost_query(workspace_id: &str, input: &Value, start: &str, end: &str) -> Resu
         "tag" => GroupBy::Tag(str_arg(input, "tag_key")?.to_owned()),
         other => return Err(Error::Other(format!("unknown group_by `{other}`"))),
     };
+    // Same default as the dashboards, so the assistant and the Costs tab agree.
     let metric = match input["metric"].as_str() {
+        Some("unblended") => CostMetric::Unblended,
         Some("amortized") => CostMetric::Amortized,
         Some("net_unblended") => CostMetric::NetUnblended,
-        _ => CostMetric::Unblended,
+        _ => default_metric,
     };
     let days = (dates::parse(end)? - dates::parse(start)?).whole_days();
     let granularity = match input["granularity"].as_str() {
@@ -210,6 +219,7 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 input,
                 str_arg(input, "start")?,
                 str_arg(input, "end")?,
+                afinin.settings()?.default_metric,
             )?;
             let s = afinin.cost_series(&q)?;
             let n = top_n(input);
@@ -243,6 +253,7 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 input,
                 str_arg(input, "current_start")?,
                 str_arg(input, "current_end")?,
+                afinin.settings()?.default_metric,
             )?;
             let (ps, pe) = (
                 str_arg(input, "previous_start")?,
@@ -374,5 +385,185 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
         "get_insights" => serde_json::to_value(afinin.insights(workspace_id)?)
             .map_err(|e| Error::Other(e.to_string())),
         other => Err(Error::Other(format!("unknown tool `{other}`"))),
+    }
+}
+
+/// `start` inclusive and `end` exclusive as an inclusive range, e.g.
+/// `2026-09-01 to 2026-09-30`.
+fn date_range(start: &str, end: &str) -> String {
+    match dates::parse(end) {
+        Ok(e) => format!("{start} to {}", dates::format(dates::add_days(e, -1))),
+        Err(_) => format!("{start} to {end} (exclusive)"),
+    }
+}
+
+/// What a tool call is doing, for progress display. `input` is unmasked; the
+/// label never leaves the machine.
+pub fn describe(name: &str, input: &Value) -> String {
+    let s = |k: &str| input[k].as_str().unwrap_or("?");
+    let by = || {
+        let g = s("group_by");
+        if g == "tag" {
+            format!("tag {}", s("tag_key"))
+        } else {
+            g.replace('_', " ")
+        }
+    };
+    match name {
+        "get_cost_overview" => "Reading the month-to-date overview".into(),
+        "query_costs" => format!(
+            "Querying costs by {}, {}",
+            by(),
+            date_range(s("start"), s("end"))
+        ),
+        "compare_periods" => format!(
+            "Comparing costs by {}, {} vs {}",
+            by(),
+            date_range(s("current_start"), s("current_end")),
+            date_range(s("previous_start"), s("previous_end"))
+        ),
+        "list_findings" => "Listing open findings".into(),
+        "get_finding" => format!("Reading finding {}", s("id")),
+        "search_resources" => format!("Searching resources for \"{}\"", s("query")),
+        "get_resource" | "get_neighbors" => {
+            let arn = s("arn");
+            let short = arn.rsplit([':', '/']).next().unwrap_or(arn);
+            if name == "get_resource" {
+                format!("Reading resource {short}")
+            } else {
+                format!("Finding what is connected to {short}")
+            }
+        }
+        "get_insights" => "Reading trends and top movers".into(),
+        other => format!("Running {other}"),
+    }
+}
+
+/// How the question was interpreted, derived from the tool calls the model
+/// made (not from its prose): periods, metric, data source and filters.
+pub fn assumptions(citations: &[Citation]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |s: String| {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    for c in citations.iter().filter(|c| c.ok) {
+        let (input, result) = (&c.input, &c.result);
+        let s = |v: &Value, k: &str| v[k].as_str().unwrap_or("?").to_owned();
+        match c.tool.as_str() {
+            "query_costs" => add(format!(
+                "Period: {}",
+                date_range(&s(input, "start"), &s(input, "end"))
+            )),
+            "compare_periods" => add(format!(
+                "Compared {} with {}",
+                date_range(&s(input, "current_start"), &s(input, "current_end")),
+                date_range(&s(input, "previous_start"), &s(input, "previous_end"))
+            )),
+            "get_cost_overview" => {
+                if let Some(d) = result["data_through"].as_str() {
+                    add(format!("Month to date, data through {d}"));
+                }
+            }
+            "get_resource" => {
+                if let Some(b) = result["cost_basis"].as_str() {
+                    add(format!("Resource cost: {b}"));
+                }
+            }
+            _ => {}
+        }
+        if let Some(m) = result["metric"].as_str() {
+            let m = m.replace('_', " ");
+            add(if input["metric"].is_string() {
+                format!("Metric: {m}")
+            } else {
+                format!("Metric: {m} (workspace default)")
+            });
+        }
+        if result["source"].as_str() == Some("CUR 2.0") {
+            add("Per-resource costs from CUR 2.0".into());
+        }
+        if result["estimated_periods"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+        {
+            add("Includes AWS estimates for the most recent days".into());
+        }
+        for (key, label) in [
+            ("account_ids", "Only accounts"),
+            ("services", "Only services"),
+        ] {
+            let list: Vec<&str> = input[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            if !list.is_empty() {
+                add(format!("{label}: {}", list.join(", ")));
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cite(tool: &str, input: Value, result: Value) -> Citation {
+        Citation {
+            n: 1,
+            tool: tool.into(),
+            input,
+            result,
+            ok: true,
+        }
+    }
+
+    #[test]
+    fn assumptions_come_from_tool_calls() {
+        let got = assumptions(&[
+            cite(
+                "query_costs",
+                json!({"group_by": "service", "start": "2026-09-01", "end": "2026-10-01", "account_ids": ["111111111111"]}),
+                json!({"metric": "amortized", "source": "Cost Explorer", "estimated_periods": []}),
+            ),
+            cite(
+                "compare_periods",
+                json!({"current_start": "2026-09-01", "current_end": "2026-10-01",
+                       "previous_start": "2026-08-01", "previous_end": "2026-09-01", "metric": "unblended"}),
+                json!({"metric": "unblended"}),
+            ),
+        ]);
+        assert_eq!(
+            got,
+            [
+                "Period: 2026-09-01 to 2026-09-30",
+                "Metric: amortized (workspace default)",
+                "Only accounts: 111111111111",
+                "Compared 2026-09-01 to 2026-09-30 with 2026-08-01 to 2026-08-31",
+                "Metric: unblended",
+            ]
+        );
+    }
+
+    #[test]
+    fn describes_tool_calls() {
+        assert_eq!(
+            describe(
+                "query_costs",
+                &json!({"group_by": "tag", "tag_key": "team", "start": "2026-09-01", "end": "2026-10-01"})
+            ),
+            "Querying costs by tag team, 2026-09-01 to 2026-09-30"
+        );
+        assert_eq!(
+            describe(
+                "get_neighbors",
+                &json!({"arn": "arn:aws:rds:us-east-1:111:db:orders"})
+            ),
+            "Finding what is connected to orders"
+        );
     }
 }

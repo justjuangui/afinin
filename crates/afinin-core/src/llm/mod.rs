@@ -7,6 +7,7 @@
 //! providers, and every request is logged locally ("show what was sent").
 
 pub mod agent;
+pub mod context;
 pub mod providers;
 pub mod redact;
 pub mod tools;

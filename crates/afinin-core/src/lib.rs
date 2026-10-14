@@ -35,13 +35,14 @@ pub use findings::{Finding, FindingStatus};
 pub use inventory::graph::{Application, Facet, Graph, GraphFilter, InventoryFacets, TagFilter};
 pub use inventory::{Resource, ResourceType};
 pub use llm::agent::{Citation, Turn};
+pub use llm::context::{Entry as ContextEntry, StoredContext, WorkspaceContext};
 pub use llm::{LlmSettings, ProviderKind};
 pub use model::{Account, ConnectionTest, SyncState, SyncStatus, Workspace};
 pub use profiles::{AwsFiles, AwsProfile, ProfileKind};
 pub use secrets::{KeychainStore, MemoryStore, SecretStore};
 pub use settings::Settings;
 pub use sso::{SsoLoginPrompt, SsoLoginStatus};
-pub use storage::{ApiUsage, CurStatus, InventoryScan, LlmLogEntry, Storage};
+pub use storage::{ApiUsage, ContextRevision, CurStatus, InventoryScan, LlmLogEntry, Storage};
 
 /// Where Afinín keeps its local data.
 #[derive(Debug, Clone)]
@@ -982,13 +983,54 @@ impl Afinin {
         Ok(names.into_iter().collect())
     }
 
+    pub fn workspace_context(&self, workspace_id: &str) -> Result<StoredContext> {
+        self.db().workspace_context(workspace_id)
+    }
+
+    /// Saves a new revision of the workspace context (unchanged text is not a
+    /// new revision).
+    pub fn save_workspace_context(
+        &self,
+        workspace_id: &str,
+        context: WorkspaceContext,
+    ) -> Result<StoredContext> {
+        self.db().save_workspace_context(workspace_id, context)
+    }
+
+    pub fn workspace_context_history(&self, workspace_id: &str) -> Result<Vec<ContextRevision>> {
+        self.db().workspace_context_history(workspace_id, 50)
+    }
+
+    /// The workspace context rendered for the prompt, with account names.
+    fn rendered_context(&self, workspace_id: &str) -> Result<(String, i64)> {
+        let stored = self.db().workspace_context(workspace_id)?;
+        if stored.context.is_empty() {
+            return Ok((String::new(), stored.revision));
+        }
+        let names: HashMap<String, String> = self
+            .db()
+            .linked_account_values(workspace_id)?
+            .into_iter()
+            .filter_map(|a| {
+                let (name, _) = a.label.rsplit_once(" (")?;
+                Some((a.key, name.to_owned()))
+            })
+            .collect();
+        Ok((
+            stored.context.render(|id| names.get(id).cloned()),
+            stored.revision,
+        ))
+    }
+
     /// Asks the assistant (FR-41). Pass the previous turn's `conversation_id`
-    /// to continue a conversation.
+    /// to continue a conversation. `on_progress` reports each model call and
+    /// tool call while the turn runs.
     pub async fn ask(
         &self,
         workspace_id: &str,
         conversation_id: Option<&str>,
         question: &str,
+        on_progress: &(dyn Fn(llm::agent::Progress) + Send + Sync),
     ) -> Result<Turn> {
         let cfg = self.settings()?.llm;
         let provider = self.llm_provider(&cfg).await?;
@@ -1012,6 +1054,21 @@ impl Afinin {
         };
         let tools = llm::tools::specs();
         let today = cost::dates::format(cost::dates::today_utc());
+        let default_metric = serde_json::to_value(self.settings()?.default_metric)
+            .ok()
+            .and_then(|v| v.as_str().map(|m| m.replace('_', " ")))
+            .unwrap_or_else(|| "unblended".into());
+        // The workspace context is written by the user but may name accounts,
+        // applications and people: mask it like everything else sent.
+        let (context, context_revision) = self.rendered_context(workspace_id)?;
+        let context = conv.redactor.mask(&context);
+        let system = llm::agent::system_prompt(&llm::agent::PromptContext {
+            today: &today,
+            redacted: conv.redactor.enabled(),
+            default_metric: &default_metric,
+            workspace: &context,
+            workspace_revision: context_revision,
+        });
         let conv_id = conv.id.clone();
         let provider_name = format!("{:?}", cfg.provider);
         let redacted = conv.redactor.enabled();
@@ -1020,7 +1077,7 @@ impl Afinin {
             &tools,
             &mut conv,
             question,
-            &today,
+            &system,
             |name, input| llm::tools::execute(self, workspace_id, name, input),
             |reply| {
                 let _ = self.db().log_llm_request(
@@ -1034,8 +1091,16 @@ impl Afinin {
                     (reply.input_tokens, reply.output_tokens),
                 );
             },
+            on_progress,
         )
-        .await;
+        .await
+        .map(|mut turn| {
+            turn.assumptions = llm::tools::assumptions(&turn.citations);
+            if !context.is_empty() {
+                turn.context_revision = context_revision;
+            }
+            turn
+        });
         self.conversations
             .lock()
             .unwrap_or_else(|e| e.into_inner())

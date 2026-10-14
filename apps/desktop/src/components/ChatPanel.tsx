@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
-import type { Citation, LlmLogEntry, Turn } from "../types";
+import type { AssistantProgress, Citation, LlmLogEntry, Turn } from "../types";
+import { Callout } from "./Callout";
 import { Modal } from "./Modal";
 
 interface Entry {
@@ -17,6 +18,23 @@ interface Props {
   prompt: { text: string; key: number } | null;
   onClose: () => void;
   onOpenSettings: () => void;
+  onOpenContext: () => void;
+}
+
+/** "Not now" on the workspace-context callout, remembered per workspace. */
+const contextHintKey = (workspaceId: string) => `afinin.chat.contextHintDismissed.${workspaceId}`;
+
+function contextHintDismissed(workspaceId: string): boolean {
+  try {
+    return localStorage.getItem(contextHintKey(workspaceId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function progressLabel(p: AssistantProgress): string {
+  if (p.stage === "tool") return p.label;
+  return p.round === 0 ? "Reading your question" : "Reviewing the results";
 }
 
 const SUGGESTIONS = [
@@ -85,7 +103,7 @@ function Markdown({ text, onCite }: { text: string; onCite: (n: number) => void 
   return <div className="md">{blocks}</div>;
 }
 
-export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings }: Props) {
+export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpenContext }: Props) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [conversation, setConversation] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -93,14 +111,35 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings }: Prop
   const [error, setError] = useState<string | null>(null);
   const [citation, setCitation] = useState<Citation | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [steps, setSteps] = useState<string[]>([]);
+  const [hasContext, setHasContext] = useState(true);
+  const [hintDismissed, setHintDismissed] = useState(() => contextHintDismissed(workspaceId));
   const bottom = useRef<HTMLDivElement>(null);
   const handled = useRef<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.workspaceContext(workspaceId).then(
+      (c) => !cancelled && setHasContext(c.revision > 0),
+      () => undefined,
+    );
+    const unlisten = api.onAssistantProgress((p) => {
+      if (p.workspace_id !== workspaceId) return;
+      const label = progressLabel(p);
+      setSteps((s) => (s[s.length - 1] === label ? s : [...s, label]));
+    });
+    return () => {
+      cancelled = true;
+      void unlisten.then((f) => f());
+    };
+  }, [workspaceId]);
 
   const send = async (question: string) => {
     const q = question.trim();
     if (!q || busy) return;
     setEntries((e) => [...e, { role: "user", text: q }]);
     setInput("");
+    setSteps([]);
     setBusy(true);
     setError(null);
     try {
@@ -157,6 +196,28 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings }: Prop
       <div className="chat-body">
         {entries.length === 0 && (
           <div className="chat-empty">
+            {!hasContext && !hintDismissed && (
+              <Callout
+                tone="action"
+                title="Teach the assistant your business"
+                actions={
+                  <button className="primary small" onClick={onOpenContext}>
+                    Add workspace context
+                  </button>
+                }
+                onDismiss={() => {
+                  try {
+                    localStorage.setItem(contextHintKey(workspaceId), "1");
+                  } catch {
+                    // Not remembered; the callout comes back next time.
+                  }
+                  setHintDismissed(true);
+                }}
+              >
+                Say what each account is for, what your tags mean and what your apps are called. Answers will use
+                your terms instead of guessing.
+              </Callout>
+            )}
             <p className="muted">
               Ask about your spend, resources and findings. The assistant answers with figures from Afinín&apos;s local data
               and cites them; it can&apos;t change anything in AWS.
@@ -177,9 +238,17 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings }: Prop
             ) : (
               <>
                 <Markdown text={e.text} onCite={(n) => setCitation(citations.get(n) ?? null)} />
+                {e.turn && e.turn.assumptions.length > 0 && (
+                  <div className="assumptions" aria-label="Assumptions">
+                    {e.turn.assumptions.map((a) => (
+                      <span key={a}>{a}</span>
+                    ))}
+                  </div>
+                )}
                 {e.turn && (
                   <div className="msg-meta muted small">
                     {e.turn.model}
+                    {e.turn.context_revision > 0 && ` · workspace context r${e.turn.context_revision}`}
                     {e.turn.redacted ? ` · ${e.turn.masked_values} identifiers masked` : " · not redacted (local model)"}
                     {e.turn.citations.length > 0 && ` · ${e.turn.citations.length} data source(s)`}
                   </div>
@@ -188,17 +257,40 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings }: Prop
             )}
           </div>
         ))}
-        {busy && <div className="msg assistant muted">Looking at your data…</div>}
-        {error && (
-          <div className="msg error">
-            {error}
-            {/configured|API key|Settings/i.test(error) && (
-              <button className="ghost small" onClick={onOpenSettings}>
-                Open settings
-              </button>
+        {busy && (
+          <div className="msg assistant muted" aria-live="polite">
+            {steps.length === 0 ? (
+              "Looking at your data…"
+            ) : (
+              <ul className="plain progress">
+                {steps.map((s, i) => (
+                  <li key={i} className={i === steps.length - 1 ? "now" : "done"}>
+                    {s}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         )}
+        {error &&
+          (/configured|API key|Settings/i.test(error) ? (
+            // A setup step, not a failure: point to where to fix it.
+            <Callout
+              tone="action"
+              title="Set up the assistant"
+              actions={
+                <button className="primary small" onClick={onOpenSettings}>
+                  Open settings
+                </button>
+              }
+            >
+              {error}
+            </Callout>
+          ) : (
+            <Callout tone="danger" title="The assistant couldn’t answer" onDismiss={() => setError(null)} dismissLabel="Dismiss">
+              {error}
+            </Callout>
+          ))}
         <div ref={bottom} />
       </div>
 
@@ -274,7 +366,11 @@ function LlmLogDialog({ workspaceId, onClose }: { workspaceId: string; onClose: 
         </>
       }
     >
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Callout tone="danger" title="Couldn’t load the request log">
+          {error}
+        </Callout>
+      )}
       <p className="muted small">
         Stored only in Afinín&apos;s encrypted local database. API keys are never logged.
       </p>

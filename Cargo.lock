@@ -87,6 +87,7 @@ version = "0.1.0"
 dependencies = [
  "afinin-core",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
