@@ -104,6 +104,12 @@ impl ResourceType {
         matches!(self, Self::EbsSnapshot)
     }
 
+    /// Whether AWS lets this resource carry tags. Lightsail static IPs can't,
+    /// so they never count as "untagged".
+    pub fn is_taggable(self) -> bool {
+        !matches!(self, Self::LightsailStaticIp)
+    }
+
     pub fn is_lightsail(self) -> bool {
         matches!(
             self,

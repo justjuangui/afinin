@@ -49,7 +49,9 @@ impl GraphFilter {
                 .tag
                 .as_ref()
                 .is_none_or(|t| match (r.tags.get(&t.key), &t.value) {
-                    (v, _) if t.missing => v.is_none_or(|v| v.is_empty()),
+                    (v, _) if t.missing => {
+                        r.resource_type.is_taggable() && v.is_none_or(|v| v.is_empty())
+                    }
                     (Some(_), None) => true,
                     (Some(v), Some(want)) => v == want,
                     (None, _) => false,
@@ -319,6 +321,8 @@ pub fn applications(resources: &[Resource], tag_key: &str) -> Vec<Application> {
     for r in resources
         .iter()
         .filter(|r| !r.resource_type.is_network_plumbing() && !r.resource_type.is_bulk())
+        // Resources that can't carry tags would only inflate "(untagged)".
+        .filter(|r| r.resource_type.is_taggable())
     {
         let value = r.tags.get(tag_key).cloned().unwrap_or_default();
         let app = groups.entry(value.clone()).or_insert_with(|| Application {
@@ -616,6 +620,38 @@ mod tests {
         assert_eq!(cost("ip-attached"), (Some(0.0), Some(CostBasis::ListPrice)));
         assert_eq!(cost("data"), (None, None), "never the whole Lightsail bill");
         assert_eq!(cost("i-9"), (Some(250.0), Some(CostBasis::Service)));
+    }
+
+    #[test]
+    fn untaggable_resources_are_never_untagged() {
+        let ip = Resource::new(
+            ResourceType::LightsailStaticIp,
+            "arn:ip",
+            A,
+            "us-east-1",
+            "ip",
+        );
+        let vm = Resource::new(
+            ResourceType::LightsailInstance,
+            "arn:vm",
+            A,
+            "us-east-1",
+            "vm",
+        );
+        let resources = [ip, vm];
+        let untagged = applications(&resources, "team");
+        assert_eq!(untagged.len(), 1);
+        assert_eq!(untagged[0].resource_count, 1, "only the instance");
+        let filter = GraphFilter {
+            tag: Some(TagFilter {
+                key: "team".into(),
+                value: None,
+                missing: true,
+            }),
+            ..Default::default()
+        };
+        assert!(!filter.matches(&resources[0]));
+        assert!(filter.matches(&resources[1]));
     }
 
     #[test]

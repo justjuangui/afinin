@@ -421,7 +421,11 @@ tr.clickable:hover td { background: var(--sidebar); }
 .rnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .rnode.match { border-color: var(--warn); }
 .rnode.dimmed { opacity: 0.3; }
-.rnode.context { border-style: solid; background: var(--bg); }
+/* Context: shown because it connects to a match, not a match itself. */
+.rnode.context { border-style: dashed; background: var(--bg); opacity: 0.6; }
+.rnode.context.selected { opacity: 1; }
+.rnode.context.dimmed { opacity: 0.2; }
+.legend-context { border: 1px dashed var(--muted); border-radius: 4px; padding: 0 6px; color: var(--muted); }
 .rnode-cost { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; }
 .rnode-type { flex: none; min-width: 30px; text-align: center; font-weight: 700; font-size: 10px; padding: 3px 4px; border-radius: 5px; background: var(--sidebar); color: var(--muted); }
 .rnode-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
