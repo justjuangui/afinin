@@ -365,6 +365,17 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
           onOpenContext={() => setTab("context")}
           screen={{ view: TAB_LABEL[tab], details: screenDetails[tab] ?? [] }}
           onNavigate={navigate}
+          onFix={(need) => {
+            if (need === "cur") {
+              // CUR is set up per account: open it directly when there is only one.
+              if (list.length === 1) setCurAccount(list[0]);
+              else setTab("accounts");
+            } else if (need === "inventory_sync") {
+              void syncAll();
+            } else if (need === "cost_allocation_tags" || need === "longer_history") {
+              onOpenSettings();
+            }
+          }}
         />
       )}
 

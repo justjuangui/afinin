@@ -297,7 +297,7 @@ pub use cost::ApiUsage;
 pub use cur::CurStatus;
 pub use findings::PRICE_TTL_DAYS;
 pub use inventory::InventoryScan;
-pub use llm::LlmLogEntry;
+pub use llm::{LlmLogEntry, LlmUsage};
 
 pub struct Storage {
     conn: Connection,

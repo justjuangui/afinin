@@ -22,7 +22,34 @@ pub struct LlmLogEntry {
     pub created_at: String,
 }
 
+/// Assistant requests per provider and model.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LlmUsage {
+    pub provider: String,
+    pub model: String,
+    pub requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
+
 impl Storage {
+    pub fn llm_usage(&self, since: &str) -> Result<Vec<LlmUsage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider, model, count(*), sum(input_tokens), sum(output_tokens) FROM llm_log
+             WHERE created_at >= ? GROUP BY ALL ORDER BY sum(input_tokens) + sum(output_tokens) DESC",
+        )?;
+        let rows = stmt.query_map(params![since], |r| {
+            Ok(LlmUsage {
+                provider: r.get(0)?,
+                model: r.get(1)?,
+                requests: r.get(2)?,
+                input_tokens: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                output_tokens: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            })
+        })?;
+        Ok(rows.collect::<duckdb::Result<_>>()?)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn log_llm_request(
         &self,
@@ -83,5 +110,31 @@ impl Storage {
             params![workspace_id],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_sums_requests_per_model_since_a_date() {
+        let db = Storage::open_in_memory().unwrap();
+        for (model, tokens) in [("a", (100, 10)), ("a", (50, 5)), ("b", (1, 1))] {
+            db.log_llm_request("w", "c", "Anthropic", model, true, "{}", "{}", tokens)
+                .unwrap();
+        }
+        let usage = db.llm_usage("2000-01-01").unwrap();
+        assert_eq!(usage.len(), 2);
+        assert_eq!(
+            (
+                usage[0].model.as_str(),
+                usage[0].requests,
+                usage[0].input_tokens,
+                usage[0].output_tokens
+            ),
+            ("a", 2, 150, 15)
+        );
+        assert!(db.llm_usage("2999-01-01").unwrap().is_empty());
     }
 }

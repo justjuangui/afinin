@@ -363,6 +363,23 @@ export interface Turn {
   turn_id: number | null;
   /** Latest successful sync when the answer was given. */
   data_as_of: string | null;
+  /** Data the answer needed but Afinín doesn't have. */
+  missing_data: MissingData[];
+}
+
+export type MissingNeed = "cur" | "inventory_sync" | "cost_allocation_tags" | "longer_history" | "other";
+
+export interface MissingData {
+  need: MissingNeed;
+  detail: string;
+}
+
+export interface LlmUsage {
+  provider: string;
+  model: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export type Rating = "up" | "down";

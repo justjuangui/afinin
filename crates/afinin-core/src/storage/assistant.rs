@@ -194,6 +194,21 @@ impl Storage {
             .ok_or_else(|| Error::NotFound(format!("assistant turn {turn_id}")))
     }
 
+    /// Answers that reported missing data, newest first.
+    pub fn assistant_gaps(&self, workspace_id: &str, limit: usize) -> Result<Vec<StoredTurn>> {
+        let mut found: Vec<StoredTurn> = self
+            .query_turns(
+                // Turns are stored as compact JSON; an empty list is `"missing_data":[]`.
+                r#"workspace_id = ? AND turn LIKE '%"missing_data":[{%'"#,
+                &workspace_id,
+            )?
+            .into_iter()
+            .rev()
+            .collect();
+        found.truncate(limit);
+        Ok(found)
+    }
+
     /// Answers kept as references for re-checks, oldest first.
     pub fn reference_turns(&self, workspace_id: &str) -> Result<Vec<StoredTurn>> {
         self.query_turns("is_reference AND workspace_id = ?", &workspace_id)
@@ -284,6 +299,7 @@ mod tests {
             unverified_figures: Vec::new(),
             turn_id: None,
             data_as_of: Some("2026-10-14T08:00:00Z".into()),
+            missing_data: Vec::new(),
         }
     }
 
@@ -351,6 +367,19 @@ mod tests {
             Some("Findings")
         );
         assert_eq!(db.assistant_turn(c2).unwrap().question, "Top findings?");
+
+        // Answers that reported missing data are listed as gaps.
+        assert!(db.assistant_gaps(&ws.id, 10).unwrap().is_empty());
+        let mut gap = turn("c2", "I can't break this down per resource.");
+        gap.missing_data = vec![crate::llm::agent::MissingData {
+            need: crate::llm::agent::MissingNeed::Cur,
+            detail: "Per-resource costs need CUR.".into(),
+        }];
+        db.save_assistant_turn(&ws.id, "Cost of i-123?", None, &gap, 300)
+            .unwrap();
+        let gaps = db.assistant_gaps(&ws.id, 10).unwrap();
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].question, "Cost of i-123?");
 
         db.delete_assistant_conversation("c1").unwrap();
         assert!(db.assistant_turns("c1").unwrap().is_empty());

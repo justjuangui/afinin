@@ -9,7 +9,10 @@ import type {
   Citation,
   ConversationSummary,
   LlmLogEntry,
+  MissingData,
+  MissingNeed,
   NavTarget,
+  StoredTurn,
   Rating,
   ScreenContext,
   Turn,
@@ -37,6 +40,40 @@ interface Props {
   /** What the user is looking at; sent with each question. */
   screen: ScreenContext;
   onNavigate: (target: NavTarget) => void;
+  /** Starts the fix for missing data (CUR setup, sync, settings). */
+  onFix: (need: MissingNeed) => void;
+}
+
+/** How to get each kind of missing data; `null` action when there is no in-app fix. */
+const FIX: Record<MissingNeed, { label: string; action: string | null }> = {
+  cur: { label: "Per-resource costs need a CUR 2.0 export", action: "Set up CUR" },
+  inventory_sync: { label: "Resources need an inventory sync", action: "Sync now" },
+  cost_allocation_tags: { label: "Costs by tag need cost allocation tags in Settings", action: "Open settings" },
+  longer_history: { label: "Older periods need more cost history", action: "Open settings" },
+  other: { label: "Some data isn’t available in Afinín", action: null },
+};
+
+function MissingDataCallout({ missing, onFix }: { missing: MissingData[]; onFix: (need: MissingNeed) => void }) {
+  const needs = [...new Set(missing.map((m) => m.need))];
+  return (
+    <Callout
+      tone="action"
+      title="This answer needs more data"
+      actions={needs
+        .filter((n) => FIX[n].action)
+        .map((n) => (
+          <button key={n} className={n === needs[0] ? "primary small" : "ghost small"} onClick={() => onFix(n)}>
+            {FIX[n].action}
+          </button>
+        ))}
+    >
+      <ul className="plain">
+        {missing.map((m) => (
+          <li key={`${m.need}:${m.detail}`}>{m.detail || FIX[m.need].label}</li>
+        ))}
+      </ul>
+    </Callout>
+  );
 }
 
 /** "Not now" on the workspace-context callout, remembered per workspace. */
@@ -121,7 +158,7 @@ function Markdown({ text, onCite }: { text: string; onCite: (n: number) => void 
   return <div className="md">{blocks}</div>;
 }
 
-export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpenContext, screen, onNavigate }: Props) {
+export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpenContext, screen, onNavigate, onFix }: Props) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [conversation, setConversation] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -260,6 +297,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
             ) : (
               <>
                 <Markdown text={e.text} onCite={(n) => setCitation(citations.get(n) ?? null)} />
+                {e.turn && e.turn.missing_data.length > 0 && <MissingDataCallout missing={e.turn.missing_data} onFix={onFix} />}
                 {e.turn && e.turn.unverified_figures.length > 0 && (
                   <Callout tone="warn" title="Some figures don’t match the data">
                     {e.turn.unverified_figures.join(", ")}{" "}
@@ -633,6 +671,7 @@ function HistoryDialog({
         </Callout>
       )}
       <ReferenceChecks workspaceId={workspaceId} />
+      <GapList workspaceId={workspaceId} onOpen={onOpen} />
       <h3>Conversations</h3>
       <p className="muted small">Saved in Afinín&apos;s encrypted local database, per workspace.</p>
       {list?.length === 0 && <p className="muted">No conversations yet.</p>}
@@ -670,5 +709,41 @@ function HistoryDialog({
         />
       )}
     </Modal>
+  );
+}
+
+/** Questions the assistant couldn't fully answer: what to unlock next. */
+function GapList({ workspaceId, onOpen }: { workspaceId: string; onOpen: (conversationId: string) => void }) {
+  const [gaps, setGaps] = useState<StoredTurn[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.assistantGaps(workspaceId).then(
+      (g) => !cancelled && setGaps(g),
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+  if (gaps.length === 0) return null;
+  return (
+    <details className="gaps">
+      <summary>
+        <h3>Couldn’t fully answer ({gaps.length})</h3>
+      </summary>
+      <ul className="plain">
+        {gaps.map((g) => (
+          <li key={g.id}>
+            <button className="link" onClick={() => onOpen(g.turn.conversation_id)}>
+              {g.question}
+            </button>
+            <span className="muted small">
+              {" "}
+              · {[...new Set(g.turn.missing_data.map((m) => FIX[m.need].label))].join("; ")} · {relativeTime(g.created_at)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
