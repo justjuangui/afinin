@@ -841,12 +841,14 @@ impl Afinin {
         let db = self.db();
         let mut top_movers =
             db.compare_costs(&query(GroupBy::Service, d(-30), d(0)), &d(-60), &d(-30))?;
+        // Changes that would display as 0.00 are noise.
+        top_movers.retain(|r| r.delta.abs() >= 0.005);
         top_movers.truncate(10);
         let usage = db.cost_series(&query(GroupBy::UsageType, d(-30), d(0)))?;
         let mut data_transfer: Vec<insights::Labeled> = usage
             .groups
             .iter()
-            .filter(|g| insights::is_data_transfer(&g.key))
+            .filter(|g| insights::is_data_transfer(&g.key) && g.total >= 0.005)
             .map(|g| insights::Labeled {
                 key: g.key.clone(),
                 label: insights::describe_usage_type(&g.key),
@@ -1100,8 +1102,10 @@ pub mod insights {
             "Data transfer between availability zones".to_owned()
         } else if rest.contains("NatGateway-Bytes") {
             "NAT gateway data processing".to_owned()
-        } else if rest.contains("-AWS-Out-Bytes") || rest.contains("-AWS-In-Bytes") {
-            "Data transfer between regions".to_owned()
+        } else if let Some(to) = rest.strip_suffix("-AWS-Out-Bytes") {
+            format!("Data transfer to {to}")
+        } else if let Some(from) = rest.strip_suffix("-AWS-In-Bytes") {
+            format!("Data transfer from {from}")
         } else if rest.contains("CloudFront") || rest.contains("DataTransfer-Out-OBytes") {
             "CloudFront / origin data transfer".to_owned()
         } else {
@@ -1128,7 +1132,11 @@ pub mod insights {
             );
             assert_eq!(
                 describe_usage_type("USE1-EUW1-AWS-Out-Bytes"),
-                "Data transfer between regions (USE1)"
+                "Data transfer to EUW1 (USE1)"
+            );
+            assert_eq!(
+                describe_usage_type("USE1-EUW1-AWS-In-Bytes"),
+                "Data transfer from EUW1 (USE1)"
             );
         }
     }

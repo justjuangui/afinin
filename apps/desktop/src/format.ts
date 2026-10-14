@@ -15,8 +15,10 @@ export function money(value: number, unit = "USD", compact = false): string {
 
 export function percent(value: number | null): string {
   if (value === null) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(1)}%`;
+  const rounded = value.toFixed(1);
+  // Avoid "-0.0%" / "+0.0%" for changes that round to nothing.
+  if (Number(rounded) === 0) return "0.0%";
+  return `${value > 0 ? "+" : ""}${rounded}%`;
 }
 
 export function relativeTime(iso: string | null): string {
