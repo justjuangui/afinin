@@ -64,7 +64,7 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - name: npm license check (no GPL/AGPL)
-        run: npx --yes license-checker-rseidelsohn --production --failOn 'GPL;AGPL;LGPL;SSPL'
+        run: npx --yes license-checker-rseidelsohn --production --excludePrivatePackages --failOn 'GPL;AGPL;LGPL;SSPL'
 
   licenses:
     name: cargo-deny
