@@ -422,6 +422,7 @@ tr.clickable:hover td { background: var(--sidebar); }
 .rnode.match { border-color: var(--warn); }
 .rnode.dimmed { opacity: 0.3; }
 /* Context: shown because it connects to a match, not a match itself. */
+.network-canvas { position: absolute; inset: 0; }
 .rnode.context { border-style: dashed; background: var(--bg); opacity: 0.6; }
 .rnode.context.selected { opacity: 1; }
 .rnode.context.dimmed { opacity: 0.2; }
