@@ -21,6 +21,7 @@ const INTERVALS = [
 export function SettingsView({ settings, onSaved }: Props) {
   const [draft, setDraft] = useState(settings);
   const [tags, setTags] = useState(settings.cost_tag_keys.join(", "));
+  const [regions, setRegions] = useState(settings.inventory_regions.join(", "));
   const [usage, setUsage] = useState<ApiUsage[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +37,10 @@ export function SettingsView({ settings, onSaved }: Props) {
       cost_tag_keys: tags
         .split(",")
         .map((t) => t.trim())
+        .filter(Boolean),
+      inventory_regions: regions
+        .split(",")
+        .map((r) => r.trim())
         .filter(Boolean),
     };
     try {
@@ -97,6 +102,24 @@ export function SettingsView({ settings, onSaved }: Props) {
             value={draft.monthly_history_months}
             onChange={(e) => setDraft({ ...draft, monthly_history_months: Number(e.target.value) })}
           />
+        </label>
+
+        <h2>Inventory</h2>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.inventory_enabled}
+            onChange={(e) => setDraft({ ...draft, inventory_enabled: e.target.checked })}
+          />
+          Discover resources during sync
+        </label>
+        <label>
+          Regions to scan
+          <input placeholder="All enabled regions" value={regions} onChange={(e) => setRegions(e.target.value)} />
+          <span className="hint">
+            Comma-separated, e.g. <code>us-east-1, eu-west-1</code>. Leave empty to scan every enabled region.
+            Inventory uses free Describe/List calls. S3 and CloudFront are always included.
+          </span>
         </label>
 
         <h2>Costs</h2>

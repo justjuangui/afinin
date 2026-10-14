@@ -79,6 +79,12 @@ export interface SyncReport {
   warnings: string[];
 }
 
+export interface AccountSyncReport {
+  costs: SyncReport | null;
+  inventory: { regions: number; resources: number; warnings: string[] } | null;
+  errors: string[];
+}
+
 export type CostMetric = "unblended" | "amortized" | "net_unblended";
 export type Granularity = "daily" | "monthly";
 
@@ -151,6 +157,8 @@ export interface Settings {
   monthly_history_months: number;
   cost_tag_keys: string[];
   default_metric: CostMetric;
+  inventory_enabled: boolean;
+  inventory_regions: string[];
 }
 
 export interface ApiUsage {
@@ -158,4 +166,84 @@ export interface ApiUsage {
   operation: string;
   calls: number;
   cost_usd: number;
+}
+
+export type Tier = "edge" | "balancing" | "routing" | "compute" | "storage" | "data" | "messaging" | "network";
+export type RelationKind =
+  | "routes_to"
+  | "attached"
+  | "triggers"
+  | "publishes_to"
+  | "in_network"
+  | "secured_by"
+  | "member_of"
+  | "owns";
+
+export interface GraphNode {
+  id: string;
+  resource_type: string;
+  type_label: string;
+  tier: Tier;
+  label: string;
+  native_id: string;
+  account_id: string;
+  region: string;
+  vpc_id: string | null;
+  tags: Record<string, string>;
+  attrs: Record<string, unknown>;
+  cost: number | null;
+  context: boolean;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: RelationKind;
+}
+
+export interface Graph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  total_resources: number;
+  cost_basis: "service" | "resource";
+  unit: string;
+}
+
+export interface GraphFilter {
+  accounts: string[];
+  regions: string[];
+  vpcs: string[];
+  types: string[];
+  tag: { key: string; value: string | null } | null;
+  include_network: boolean;
+}
+
+export interface Facet {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface InventoryFacets {
+  accounts: Facet[];
+  regions: Facet[];
+  vpcs: Facet[];
+  types: Facet[];
+  tag_keys: Facet[];
+  total: number;
+}
+
+export interface Application {
+  value: string;
+  resource_count: number;
+  resource_types: Record<string, number>;
+  cost: number | null;
+}
+
+export interface InventoryScan {
+  account_id: string;
+  scan_region: string;
+  scanned_at: string;
+  resource_count: number;
+  warnings: string[];
 }

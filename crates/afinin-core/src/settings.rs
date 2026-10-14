@@ -20,6 +20,10 @@ pub struct Settings {
     /// Cost allocation tag keys to break costs down by (FR-11).
     pub cost_tag_keys: Vec<String>,
     pub default_metric: CostMetric,
+    /// Discover resources during sync (FR-20).
+    pub inventory_enabled: bool,
+    /// Regions to scan; empty means every region enabled in the account (FR-52).
+    pub inventory_regions: Vec<String>,
 }
 
 impl Default for Settings {
@@ -30,6 +34,8 @@ impl Default for Settings {
             monthly_history_months: 12,
             cost_tag_keys: Vec::new(),
             default_metric: CostMetric::Unblended,
+            inventory_enabled: true,
+            inventory_regions: Vec::new(),
         }
     }
 }
@@ -55,6 +61,14 @@ impl Settings {
             return Err(Error::Other(
                 "tag keys must be non-empty and cannot contain `$`".into(),
             ));
+        }
+        if self.inventory_regions.iter().any(|r| {
+            r.is_empty()
+                || !r
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        }) {
+            return Err(Error::Other("regions must look like `us-east-1`".into()));
         }
         Ok(())
     }

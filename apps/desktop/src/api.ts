@@ -14,8 +14,14 @@ import type {
   CostSeries,
   DimensionValue,
   GroupBy,
+  AccountSyncReport,
+  Application,
+  Facet,
+  Graph,
+  GraphFilter,
+  InventoryFacets,
+  InventoryScan,
   Settings,
-  SyncReport,
   SsoLoginPrompt,
   SsoLoginStatus,
   Workspace,
@@ -45,7 +51,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
 
-  syncAccount: (id: string) => invoke<SyncReport>("sync_account", { id }),
+  syncAccount: (id: string) => invoke<AccountSyncReport>("sync_account", { id }),
   syncWorkspace: (workspaceId: string) => invoke<void>("sync_workspace", { workspaceId }),
   apiUsage: () => invoke<ApiUsage[]>("api_usage"),
   /** Fires with an account id whenever its sync starts or ends. */
@@ -59,6 +65,13 @@ export const api = {
     invoke<CostComparisonRow[]>("compare_costs", { query, prevStart, prevEnd }),
   dimensionValues: (workspaceId: string, groupBy: GroupBy) =>
     invoke<DimensionValue[]>("dimension_values", { workspaceId, groupBy }),
+  inventoryGraph: (workspaceId: string, filter: GraphFilter) =>
+    invoke<Graph>("inventory_graph", { workspaceId, filter }),
+  inventoryFacets: (workspaceId: string) => invoke<InventoryFacets>("inventory_facets", { workspaceId }),
+  tagValues: (workspaceId: string, key: string) => invoke<Facet[]>("tag_values", { workspaceId, key }),
+  applications: (workspaceId: string, tagKey: string) =>
+    invoke<Application[]>("applications", { workspaceId, tagKey }),
+  inventoryScans: (workspaceId: string) => invoke<InventoryScan[]>("inventory_scans", { workspaceId }),
   exportCsv: (query: CostQuery, compare: [string, string] | null, fileName: string) =>
     invoke<boolean>("export_csv", { query, compare, fileName }),
 };

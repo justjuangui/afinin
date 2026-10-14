@@ -97,6 +97,38 @@ const MIGRATIONS: &[&str] = &[
         value  TEXT NOT NULL
     );
     "#,
+    // v3: inventory (M2). A scan of one region replaces that region's rows.
+    r#"
+    CREATE TABLE resources (
+        source_account  TEXT NOT NULL,
+        scan_region     TEXT NOT NULL,   -- region scanned, or 'global'
+        arn             TEXT NOT NULL,
+        resource_type   TEXT NOT NULL,
+        account_id      TEXT NOT NULL,
+        region          TEXT NOT NULL,
+        native_id       TEXT NOT NULL,
+        name            TEXT,
+        tags            TEXT NOT NULL,   -- JSON object
+        attrs           TEXT NOT NULL    -- JSON object
+    );
+    CREATE INDEX resources_source ON resources (source_account, scan_region);
+    CREATE TABLE relations (
+        source_account  TEXT NOT NULL,
+        scan_region     TEXT NOT NULL,
+        from_arn        TEXT NOT NULL,
+        to_ref          TEXT NOT NULL,   -- ARN, dns:<name> or ip:<address>
+        kind            TEXT NOT NULL
+    );
+    CREATE INDEX relations_source ON relations (source_account, scan_region);
+    CREATE TABLE inventory_scans (
+        source_account  TEXT NOT NULL,
+        scan_region     TEXT NOT NULL,
+        scanned_at      TEXT NOT NULL,
+        resource_count  INTEGER NOT NULL,
+        warnings        TEXT NOT NULL,   -- JSON array
+        PRIMARY KEY (source_account, scan_region)
+    );
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -106,12 +138,17 @@ const ACCOUNT_DATA: &[(&str, &str)] = &[
     ("cost_sync_state", "source_account"),
     ("cost_forecasts", "source_account"),
     ("account_sync", "account_id"),
+    ("resources", "source_account"),
+    ("relations", "source_account"),
+    ("inventory_scans", "source_account"),
 ];
 
 mod cost;
+mod inventory;
 mod settings;
 
 pub use cost::ApiUsage;
+pub use inventory::InventoryScan;
 
 pub struct Storage {
     conn: Connection,

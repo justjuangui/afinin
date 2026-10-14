@@ -6,7 +6,7 @@ Afinín (from *afinar*, to tune an instrument) is a local, cross-platform deskto
 connects **read-only** to your AWS accounts, shows where the money goes and how your
 services connect, and flags waste and anomalies — with any LLM or none.
 
-Status: **early development** — M0 (skeleton) and M1 (Cost Explorer costs) done. See [`requirement.md`](requirement.md).
+Status: **early development** — M0 (skeleton), M1 (Cost Explorer costs) and M2 (inventory & dependency graph) done. See [`requirement.md`](requirement.md).
 
 ## Repository layout
 

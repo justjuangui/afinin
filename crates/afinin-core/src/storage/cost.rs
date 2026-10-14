@@ -17,6 +17,9 @@ use crate::cost::{
 use crate::error::Result;
 use crate::model::now_rfc3339;
 
+/// (linked account, service) → cost.
+pub(crate) type ServiceCosts = HashMap<(String, String), f64>;
+
 /// Calls made to a billable AWS API (FR-14, NFR-30).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ApiUsage {
@@ -478,6 +481,48 @@ impl Storage {
             period_totals,
             unit: unit.unwrap_or_else(|| "USD".into()),
         })
+    }
+
+    /// Cost per (linked account, service) in `[start, end)`, for the graph overlay.
+    pub(crate) fn service_cost_by_account(
+        &self,
+        workspace_id: &str,
+        metric: CostMetric,
+        start: &str,
+        end: &str,
+    ) -> Result<(ServiceCosts, String)> {
+        let facts = FactsSpec {
+            workspace_id,
+            granularity: Granularity::Daily,
+            dimension: &Dimension::Service,
+            start,
+            end,
+            linked_accounts: &[],
+            keys: &[],
+            source: None,
+        }
+        .build();
+        let sql = format!(
+            "{}SELECT linked_account, key, sum({}), any_value(unit) FROM f GROUP BY 1, 2",
+            facts.sql,
+            metric.column()
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut unit = None;
+        let mut out = HashMap::new();
+        for row in stmt.query_map(params_from_iter(facts.params), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, f64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })? {
+            let (account, service, amount, u) = row?;
+            unit.get_or_insert(u);
+            out.insert((account, service), amount);
+        }
+        Ok((out, unit.unwrap_or_else(|| "USD".into())))
     }
 
     /// Compares each group's total in the query range with `[prev_start, prev_end)` (FR-12).

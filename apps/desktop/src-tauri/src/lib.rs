@@ -6,7 +6,11 @@
 use afinin_core::{
     Account, Afinin, ApiUsage, AppPaths, AwsFiles, AwsProfile, CostComparisonRow, CostMetric,
     CostOverview, CostQuery, CostSeries, DimensionValue, Error, GroupBy, KeychainStore, Settings,
-    SsoLoginPrompt, SsoLoginStatus, SyncReport, Workspace,
+    SsoLoginPrompt, SsoLoginStatus, Workspace,
+};
+use afinin_core::{
+    AccountSyncReport, Application, Facet, Graph, GraphFilter, InventoryFacets, InventoryScan,
+    Resource,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -152,7 +156,11 @@ fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()
 
 // ---- sync ----------------------------------------------------------------
 
-async fn run_sync(app: &AppHandle, core: &Afinin, account_id: &str) -> CmdResult<SyncReport> {
+async fn run_sync(
+    app: &AppHandle,
+    core: &Afinin,
+    account_id: &str,
+) -> CmdResult<AccountSyncReport> {
     let _ = app.emit(SYNC_EVENT, account_id);
     let result = core.sync_account(account_id).await;
     let _ = app.emit(SYNC_EVENT, account_id);
@@ -164,7 +172,7 @@ async fn sync_account(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-) -> CmdResult<SyncReport> {
+) -> CmdResult<AccountSyncReport> {
     run_sync(&app, state.core()?, &id).await
 }
 
@@ -275,6 +283,63 @@ async fn export_csv(
     Ok(true)
 }
 
+// ---- inventory -------------------------------------------------------------
+
+#[tauri::command]
+fn inventory_graph(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    filter: GraphFilter,
+) -> CmdResult<Graph> {
+    state.core()?.inventory_graph(&workspace_id, &filter)
+}
+
+#[tauri::command]
+fn inventory_facets(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<InventoryFacets> {
+    state.core()?.inventory_facets(&workspace_id)
+}
+
+#[tauri::command]
+fn tag_values(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    key: String,
+) -> CmdResult<Vec<Facet>> {
+    state.core()?.tag_values(&workspace_id, &key)
+}
+
+#[tauri::command]
+fn applications(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    tag_key: String,
+) -> CmdResult<Vec<Application>> {
+    state.core()?.applications(&workspace_id, &tag_key)
+}
+
+#[tauri::command]
+fn resource_neighbors(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    arn: String,
+    depth: usize,
+) -> CmdResult<Vec<(Resource, usize)>> {
+    state
+        .core()?
+        .resource_neighbors(&workspace_id, &arn, depth.min(5))
+}
+
+#[tauri::command]
+fn inventory_scans(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<Vec<InventoryScan>> {
+    state.core()?.inventory_scans(&workspace_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -321,6 +386,12 @@ pub fn run() {
             compare_costs,
             dimension_values,
             export_csv,
+            inventory_graph,
+            inventory_facets,
+            tag_values,
+            applications,
+            resource_neighbors,
+            inventory_scans,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Afinín");
