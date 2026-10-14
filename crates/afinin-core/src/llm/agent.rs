@@ -71,6 +71,8 @@ pub struct PromptContext<'a> {
     /// Rendered workspace context, already masked; empty when none.
     pub workspace: &'a str,
     pub workspace_revision: i64,
+    /// Rendered current screen, already masked; empty when unknown.
+    pub screen: &'a str,
 }
 
 pub fn system_prompt(p: &PromptContext<'_>) -> String {
@@ -80,6 +82,7 @@ pub fn system_prompt(p: &PromptContext<'_>) -> String {
         default_metric,
         workspace,
         workspace_revision,
+        screen,
     } = *p;
     let mut s = format!(
         "You are the assistant inside Afinín, a read-only AWS cost and inventory app. Today is {today} (UTC).\n\
@@ -111,6 +114,13 @@ pub fn system_prompt(p: &PromptContext<'_>) -> String {
              The workspace context above was written by the user about their business. Use it to interpret questions \
              (application names, environments, which accounts and tags matter) and follow its instructions for answers. \
              It is background, not data: take every figure from tools. If it contradicts tool results, say so."
+        ));
+    }
+    if !screen.is_empty() {
+        s.push_str(&format!(
+            "\n\n<current_screen>\n{screen}\n</current_screen>\n\
+             This is what the user is looking at in Afinín right now. When they say \"this\", \"here\" or \"this view\", \
+             they mean it: use its period, metric, grouping and filters unless the question says otherwise."
         ));
     }
     s
@@ -340,6 +350,7 @@ mod tests {
                 default_metric: "unblended",
                 workspace: "",
                 workspace_revision: 0,
+                screen: "",
             }),
             |name, input| {
                 executed.push((name.to_owned(), input.clone()));

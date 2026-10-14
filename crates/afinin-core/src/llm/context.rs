@@ -208,6 +208,37 @@ impl WorkspaceContext {
     }
 }
 
+/// What the user is looking at when asking, so "this view" or "here" has a
+/// precise meaning. Reported by the UI; rendered into the prompt.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScreenContext {
+    /// The screen, e.g. "Costs" or "Inventory".
+    pub view: String,
+    /// What it shows, in the screen's order: period, metric, filters,
+    /// selected resource…
+    pub details: Vec<Entry>,
+}
+
+impl ScreenContext {
+    /// Markdown for the prompt; empty when the UI reported nothing.
+    pub fn render(&self) -> String {
+        let view = self.view.trim();
+        if view.is_empty() {
+            return String::new();
+        }
+        let mut out = format!("Screen: {view}");
+        for d in self.details.iter().take(MAX_ENTRIES) {
+            let (k, v) = (d.key.trim(), d.meaning.trim());
+            if !k.is_empty() && !v.is_empty() {
+                let v: String = v.chars().take(MAX_MEANING_CHARS).collect();
+                out.push_str(&format!("\n- {k}: {v}"));
+            }
+        }
+        out
+    }
+}
+
 /// Built-in notes about AWS billing that apply to every workspace.
 pub const AWS_BILLING_NOTES: &str = "\
 - \"EC2 - Other\" is a separate Cost Explorer service holding EBS volumes and snapshots, NAT gateways, Elastic IPs and EC2 data transfer. \
@@ -274,6 +305,23 @@ mod tests {
             ..Default::default()
         };
         assert!(dup.normalized().is_err());
+    }
+
+    #[test]
+    fn renders_the_current_screen() {
+        let screen = ScreenContext {
+            view: "Costs".into(),
+            details: vec![
+                entry("period", "2026-10-01 to 2026-10-13 (month to date)"),
+                entry("accounts", ""),
+                entry("group by", "service"),
+            ],
+        };
+        assert_eq!(
+            screen.render(),
+            "Screen: Costs\n- period: 2026-10-01 to 2026-10-13 (month to date)\n- group by: service"
+        );
+        assert_eq!(ScreenContext::default().render(), "");
     }
 
     #[test]

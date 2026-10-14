@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { relativeTime } from "../format";
-import type { Account, CurStatus, Settings, Workspace } from "../types";
+import type { Account, ContextEntry, CurStatus, NavTarget, Settings, Workspace } from "../types";
 import { AccountRow } from "./AccountRow";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { SsoLoginDialog } from "./SsoLoginDialog";
@@ -43,6 +43,17 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
   const [curAccount, setCurAccount] = useState<Account | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatPrompt, setChatPrompt] = useState<{ text: string; key: number } | null>(null);
+  // What each tab currently shows, for the assistant ("this view").
+  const [screenDetails, setScreenDetails] = useState<Partial<Record<Tab, ContextEntry[]>>>({});
+  const reportCosts = useCallback((d: ContextEntry[]) => setScreenDetails((s) => ({ ...s, costs: d })), []);
+  const reportFindings = useCallback((d: ContextEntry[]) => setScreenDetails((s) => ({ ...s, findings: d })), []);
+  const reportInventory = useCallback((d: ContextEntry[]) => setScreenDetails((s) => ({ ...s, inventory: d })), []);
+  // Navigation requested by an assistant answer; `key` re-applies the same target.
+  const [nav, setNav] = useState<{ target: NavTarget; key: number } | null>(null);
+  const navigate = (target: NavTarget) => {
+    setNav({ target, key: Date.now() });
+    setTab(target.view);
+  };
   const explain = (text: string) => {
     setChatPrompt({ text, key: Date.now() });
     setChatOpen(true);
@@ -224,7 +235,11 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
         <>
           <nav className="tabs" role="tablist">
             {(["costs", "findings", "inventory", "accounts", "context"] as Tab[]).map((t) => (
-              <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
+              <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "tab active" : "tab"} onClick={() => {
+                  // A tab picked by hand never re-applies an earlier answer's view.
+                  setNav(null);
+                  setTab(t);
+                }}>
                 {TAB_LABEL[t]}
                 {t === "accounts" && failedSyncs > 0 && <span className="badge warn">{failedSyncs} failed</span>}
               </button>
@@ -240,9 +255,17 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
               syncing={syncing}
               onSync={syncAll}
               curAvailable={(cur?.billing_periods.length ?? 0) > 0}
+              onScreen={reportCosts}
+              nav={nav?.target.view === "costs" ? nav : null}
             />
           ) : tab === "findings" ? (
-            <FindingsView key={workspace.id} workspaceId={workspace.id} dataVersion={dataVersion} onExplain={explain} />
+            <FindingsView
+              key={workspace.id}
+              workspaceId={workspace.id}
+              dataVersion={dataVersion}
+              onExplain={explain}
+              onScreen={reportFindings}
+            />
           ) : tab === "inventory" ? (
             <InventoryView
               key={workspace.id}
@@ -252,6 +275,8 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
               onSync={syncAll}
               syncing={syncing}
               onExplain={explain}
+              onScreen={reportInventory}
+              nav={nav?.target.view === "inventory" ? nav : null}
             />
           ) : tab === "context" ? (
             <ContextView key={workspace.id} workspaceId={workspace.id} costTagKeys={settings.cost_tag_keys} />
@@ -338,6 +363,8 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
           onClose={() => setChatOpen(false)}
           onOpenSettings={onOpenSettings}
           onOpenContext={() => setTab("context")}
+          screen={{ view: TAB_LABEL[tab], details: screenDetails[tab] ?? [] }}
+          onNavigate={navigate}
         />
       )}
 

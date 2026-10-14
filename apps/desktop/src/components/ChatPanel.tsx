@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
-import type { AssistantProgress, Citation, LlmLogEntry, Turn } from "../types";
+import { navLinks } from "../assistantNav";
+import type { AssistantProgress, Citation, LlmLogEntry, NavTarget, ScreenContext, Turn } from "../types";
 import { Callout } from "./Callout";
 import { Modal } from "./Modal";
 
@@ -19,6 +20,9 @@ interface Props {
   onClose: () => void;
   onOpenSettings: () => void;
   onOpenContext: () => void;
+  /** What the user is looking at; sent with each question. */
+  screen: ScreenContext;
+  onNavigate: (target: NavTarget) => void;
 }
 
 /** "Not now" on the workspace-context callout, remembered per workspace. */
@@ -103,7 +107,7 @@ function Markdown({ text, onCite }: { text: string; onCite: (n: number) => void 
   return <div className="md">{blocks}</div>;
 }
 
-export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpenContext }: Props) {
+export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpenContext, screen, onNavigate }: Props) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [conversation, setConversation] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -143,7 +147,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
     setBusy(true);
     setError(null);
     try {
-      const turn = await api.ask(workspaceId, conversation, q);
+      const turn = await api.ask(workspaceId, conversation, q, screen);
       setConversation(turn.conversation_id);
       setEntries((e) => [...e, { role: "assistant", text: turn.answer, turn }]);
     } catch (e) {
@@ -242,6 +246,15 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
                   <div className="assumptions" aria-label="Assumptions">
                     {e.turn.assumptions.map((a) => (
                       <span key={a}>{a}</span>
+                    ))}
+                  </div>
+                )}
+                {e.turn && navLinks(e.turn).length > 0 && (
+                  <div className="nav-links">
+                    {navLinks(e.turn).map((l) => (
+                      <button key={l.label} className="ghost small" onClick={() => onNavigate(l.target)}>
+                        {l.label} →
+                      </button>
                     ))}
                   </div>
                 )}

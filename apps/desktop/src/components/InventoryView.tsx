@@ -20,6 +20,7 @@ import { money, relativeTime } from "../format";
 import { NODE_H, NODE_W, layout } from "../graphLayout";
 import type {
   Application,
+  ContextEntry,
   Facet,
   Graph,
   GraphEdge,
@@ -27,6 +28,7 @@ import type {
   GraphNode,
   InventoryFacets,
   InventoryScan,
+  NavTarget,
   RelationKind,
 } from "../types";
 import { MultiSelect } from "./MultiSelect";
@@ -143,6 +145,10 @@ interface Props {
   onSync: () => void;
   syncing: boolean;
   onExplain: (prompt: string) => void;
+  /** Reports what the graph shows, for the assistant. */
+  onScreen: (details: ContextEntry[]) => void;
+  /** A resource to show, from an assistant answer. */
+  nav: { target: NavTarget; key: number } | null;
 }
 
 export function InventoryView(props: Props) {
@@ -153,7 +159,7 @@ export function InventoryView(props: Props) {
   );
 }
 
-function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onExplain }: Props) {
+function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onExplain, onScreen, nav }: Props) {
   const [mode, setMode] = useState<"graph" | "applications">("graph");
   const [filter, setFilter] = useState<GraphFilter>(EMPTY_FILTER);
   const [facets, setFacets] = useState<InventoryFacets | null>(null);
@@ -166,6 +172,10 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
   const [matchIndex, setMatchIndex] = useState(0);
   const [showWarnings, setShowWarnings] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A resource to focus once the graph that should contain it has loaded.
+  // `stale` is the graph on screen when navigation started (null if reused).
+  const [pending, setPending] = useState<{ arn: string; stale: Graph | null } | null>(null);
+  const [notFound, setNotFound] = useState<string | null>(null);
   const flow = useReactFlow();
 
   useEffect(() => {
@@ -205,6 +215,60 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
   }, [workspaceId, tagKey]);
 
   const positions = useMemo(() => (graph ? layout(graph.nodes, graph.edges) : new Map()), [graph]);
+
+  // Navigation from an assistant answer, applied once during render: show the
+  // unfiltered graph, then select the resource when that graph has loaded.
+  const [appliedNav, setAppliedNav] = useState<number | null>(null);
+  const [centerOn, setCenterOn] = useState<{ arn: string } | null>(null);
+  if (nav && nav.target.view === "inventory" && nav.key !== appliedNav) {
+    const reuse = JSON.stringify(filter) === JSON.stringify(EMPTY_FILTER);
+    setAppliedNav(nav.key);
+    setMode("graph");
+    setSearch("");
+    setNotFound(null);
+    if (!reuse) setFilter(EMPTY_FILTER);
+    setPending({ arn: nav.target.arn, stale: reuse ? null : graph });
+  }
+  if (pending && graph && graph !== pending.stale) {
+    setPending(null);
+    if (positions.has(pending.arn)) {
+      setSelected(pending.arn);
+      setCenterOn({ arn: pending.arn });
+    } else {
+      setNotFound(pending.arn);
+    }
+  }
+
+  // Center after the graph's own re-fit (next frames), without touching state.
+  useEffect(() => {
+    if (!centerOn) return;
+    const p = positions.get(centerOn.arn);
+    if (!p) return;
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => void flow.setCenter(p.x + NODE_W / 2, p.y + NODE_H / 2, { zoom: 1.1, duration: 300 }));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [centerOn, positions, flow]);
+
+  useEffect(() => {
+    const names = (options: Facet[] | undefined, keys: string[]) =>
+      keys.map((k) => options?.find((o) => o.key === k)?.label ?? k).join(", ");
+    const details: ContextEntry[] = [{ key: "mode", meaning: mode === "graph" ? "resource graph" : "applications by tag" }];
+    if (filter.accounts.length) details.push({ key: "only accounts", meaning: names(facets?.accounts, filter.accounts) });
+    if (filter.regions.length) details.push({ key: "only regions", meaning: filter.regions.join(", ") });
+    if (filter.vpcs.length) details.push({ key: "only VPCs", meaning: filter.vpcs.join(", ") });
+    if (filter.types.length) details.push({ key: "only types", meaning: names(facets?.types, filter.types) });
+    if (filter.tag) details.push({ key: "tag filter", meaning: filter.tag.value ? `${filter.tag.key}=${filter.tag.value}` : filter.tag.key });
+    if (filter.include_network) details.push({ key: "network resources", meaning: "shown" });
+    if (graph && facets) details.push({ key: "resources shown", meaning: `${graph.nodes.length} of ${facets.total}` });
+    const node = selected ? graph?.nodes.find((n) => n.id === selected) : undefined;
+    if (node) details.push({ key: "selected resource", meaning: `${node.label} (${node.resource_type}) ${node.id}` });
+    onScreen(details);
+  }, [mode, filter, facets, graph, selected, onScreen]);
 
   // Re-fit whenever the filtered graph changes, not only on first render.
   useEffect(() => {
@@ -306,6 +370,12 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
 
   return (
     <div className="inventory">
+      {notFound && (
+        <Callout tone="info" title="That resource isn’t in the graph" onDismiss={() => setNotFound(null)} dismissLabel="Dismiss">
+          <code className="small wrap">{notFound}</code> is hidden by the graph’s defaults (network plumbing and
+          snapshots are only shown when selected) or no longer exists. Turn on <b>Network</b> or filter by its type.
+        </Callout>
+      )}
       {error && (
         <Callout tone="danger" title="Couldn’t load the inventory" onDismiss={() => setError(null)} dismissLabel="Dismiss">
           {error}

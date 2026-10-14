@@ -35,7 +35,7 @@ pub use findings::{Finding, FindingStatus};
 pub use inventory::graph::{Application, Facet, Graph, GraphFilter, InventoryFacets, TagFilter};
 pub use inventory::{Resource, ResourceType};
 pub use llm::agent::{Citation, Turn};
-pub use llm::context::{Entry as ContextEntry, StoredContext, WorkspaceContext};
+pub use llm::context::{Entry as ContextEntry, ScreenContext, StoredContext, WorkspaceContext};
 pub use llm::{LlmSettings, ProviderKind};
 pub use model::{Account, ConnectionTest, SyncState, SyncStatus, Workspace};
 pub use profiles::{AwsFiles, AwsProfile, ProfileKind};
@@ -1030,6 +1030,7 @@ impl Afinin {
         workspace_id: &str,
         conversation_id: Option<&str>,
         question: &str,
+        screen: Option<&llm::context::ScreenContext>,
         on_progress: &(dyn Fn(llm::agent::Progress) + Send + Sync),
     ) -> Result<Turn> {
         let cfg = self.settings()?.llm;
@@ -1062,12 +1063,16 @@ impl Afinin {
         // applications and people: mask it like everything else sent.
         let (context, context_revision) = self.rendered_context(workspace_id)?;
         let context = conv.redactor.mask(&context);
+        let screen = conv
+            .redactor
+            .mask(&screen.map(|s| s.render()).unwrap_or_default());
         let system = llm::agent::system_prompt(&llm::agent::PromptContext {
             today: &today,
             redacted: conv.redactor.enabled(),
             default_metric: &default_metric,
             workspace: &context,
             workspace_revision: context_revision,
+            screen: &screen,
         });
         let conv_id = conv.id.clone();
         let provider_name = format!("{:?}", cfg.provider);
