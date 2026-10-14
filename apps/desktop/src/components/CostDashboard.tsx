@@ -30,13 +30,14 @@ const METRICS: { id: CostMetric; label: string }[] = [
 
 const groupId = (g: GroupBy) => (g.kind === "tag" ? `tag:${g.key}` : g.kind);
 
-function groupOptions(tagKeys: string[]): { id: string; label: string; value: GroupBy }[] {
+function groupOptions(tagKeys: string[], cur = false): { id: string; label: string; value: GroupBy; disabled?: boolean }[] {
   return [
     { id: "service", label: "Service", value: { kind: "service" } },
     { id: "account", label: "Account", value: { kind: "account" } },
     { id: "region", label: "Region", value: { kind: "region" } },
     { id: "usage_type", label: "Usage type", value: { kind: "usage_type" } },
     ...tagKeys.map((k) => ({ id: `tag:${k}`, label: `Tag: ${k}`, value: { kind: "tag", key: k } as GroupBy })),
+    { id: "resource", label: cur ? "Resource" : "Resource (needs CUR)", value: { kind: "resource" }, disabled: !cur },
   ];
 }
 
@@ -67,9 +68,11 @@ interface Props {
   dataVersion: number;
   syncing: boolean;
   onSync: () => void;
+  /** CUR data is loaded, enabling per-resource breakdowns. */
+  curAvailable: boolean;
 }
 
-export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onSync }: Props) {
+export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onSync, curAvailable }: Props) {
   const [range, setRange] = useState<DateRange>(() => presetRange("mtd"));
   const [metric, setMetric] = useState<CostMetric>(settings.default_metric);
   const [groupBy, setGroupBy] = useState<GroupBy>({ kind: "service" });
@@ -86,6 +89,8 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
   const [error, setError] = useState<string | null>(null);
 
   const serviceFilterAvailable = groupBy.kind === "service" || groupBy.kind === "account";
+  // Cost data source shown with the breakdown.
+  const source = groupBy.kind === "resource" ? "CUR 2.0" : "Cost Explorer";
   const query: CostQuery = useMemo(
     () => ({
       workspace_id: workspaceId,
@@ -167,7 +172,7 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
   };
 
   const changeGroup = (id: string) => {
-    const option = groupOptions(settings.cost_tag_keys).find((o) => o.id === id);
+    const option = groupOptions(settings.cost_tag_keys, curAvailable).find((o) => o.id === id);
     if (!option) return;
     setGroupBy(option.value);
     setSlots({});
@@ -283,8 +288,8 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
           ))}
         </div>
         <select value={groupId(groupBy)} onChange={(e) => changeGroup(e.target.value)} aria-label="Group by">
-          {groupOptions(settings.cost_tag_keys).map((o) => (
-            <option key={o.id} value={o.id}>
+          {groupOptions(settings.cost_tag_keys, curAvailable).map((o) => (
+            <option key={o.id} value={o.id} disabled={o.disabled}>
               Group by {o.label.toLowerCase()}
             </option>
           ))}
@@ -316,7 +321,10 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
             <h2>
               {money(series.total, unit)} <span className="muted">in selected period</span>
             </h2>
-            {series.estimated_periods.length > 0 && <span className="muted small">* includes AWS estimates</span>}
+            <span className="muted small">
+              Source: {source}
+              {series.estimated_periods.length > 0 && " · * includes AWS estimates"}
+            </span>
           </header>
           {series.groups.length === 0 ? (
             <p className="muted">No costs in this period.</p>
@@ -337,7 +345,7 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
           <table className="breakdown">
             <thead>
               <tr>
-                <th>{groupOptions(settings.cost_tag_keys).find((o) => o.id === groupId(groupBy))?.label}</th>
+                <th>{groupOptions(settings.cost_tag_keys, curAvailable).find((o) => o.id === groupId(groupBy))?.label}</th>
                 <th className="num">Cost</th>
                 <th className="num">Share</th>
                 {compare && (

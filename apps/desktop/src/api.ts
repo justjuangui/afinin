@@ -15,6 +15,9 @@ import type {
   DimensionValue,
   GroupBy,
   AccountSyncReport,
+  CurConfig,
+  CurStatus,
+  CurValidation,
   Application,
   Facet,
   Graph,
@@ -72,6 +75,14 @@ export const api = {
   applications: (workspaceId: string, tagKey: string) =>
     invoke<Application[]>("applications", { workspaceId, tagKey }),
   inventoryScans: (workspaceId: string) => invoke<InventoryScan[]>("inventory_scans", { workspaceId }),
+  validateCur: (config: CurConfig) => invoke<CurValidation>("validate_cur", { config }),
+  saveCurConfig: (config: CurConfig) => invoke<void>("save_cur_config", { config }),
+  getCurConfig: (accountId: string) => invoke<CurConfig | null>("get_cur_config", { accountId }),
+  deleteCurConfig: (accountId: string) => invoke<void>("delete_cur_config", { accountId }),
+  curStatus: (workspaceId: string) => invoke<CurStatus>("cur_status", { workspaceId }),
+  curSetupHelp: (bucket: string) =>
+    invoke<{ deploy_command: string; read_policy: string }>("cur_setup_help", { bucket }),
+  saveCurTemplate: () => invoke<boolean>("save_cur_template"),
   exportCsv: (query: CostQuery, compare: [string, string] | null, fileName: string) =>
     invoke<boolean>("export_csv", { query, compare, fileName }),
 };

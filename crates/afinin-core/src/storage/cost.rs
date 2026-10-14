@@ -369,8 +369,10 @@ impl Storage {
         workspace_id: &str,
         group_by: &GroupBy,
     ) -> Result<Vec<DimensionValue>> {
-        if *group_by == GroupBy::Account {
-            return self.linked_account_values(workspace_id);
+        match group_by {
+            GroupBy::Account => return self.linked_account_values(workspace_id),
+            GroupBy::Resource => return Ok(Vec::new()),
+            _ => {}
         }
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT key FROM cost_facts
@@ -395,6 +397,9 @@ impl Storage {
     /// Breakdown of costs per group and period (FR-11, FR-12, FR-13).
     pub fn cost_series(&self, q: &CostQuery) -> Result<CostSeries> {
         q.validate()?;
+        if q.group_by == GroupBy::Resource {
+            return self.cur_series(q);
+        }
         let start = match q.granularity {
             Granularity::Daily => q.start.clone(),
             Granularity::Monthly => dates::format(dates::first_of_month(dates::parse(&q.start)?)),
@@ -726,7 +731,7 @@ impl Storage {
 }
 
 /// All period starts in `[start, end)`.
-fn period_list(start: &str, end: &str, granularity: Granularity) -> Result<Vec<String>> {
+pub(super) fn period_list(start: &str, end: &str, granularity: Granularity) -> Result<Vec<String>> {
     let (mut d, end) = (dates::parse(start)?, dates::parse(end)?);
     let mut out = Vec::new();
     while d < end {

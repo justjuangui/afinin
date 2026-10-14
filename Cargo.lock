@@ -27,6 +27,7 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-apigateway",
  "aws-sdk-apigatewayv2",
+ "aws-sdk-bcmdataexports",
  "aws-sdk-cloudfront",
  "aws-sdk-costexplorer",
  "aws-sdk-dynamodb",
@@ -614,6 +615,30 @@ name = "aws-sdk-apigatewayv2"
 version = "1.96.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4706bdc354acee6acaa3f142af403fd005f76d6a38b3a7ccd040099e6e3cca83"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-bcmdataexports"
+version = "1.90.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdfb049d43f0a4999866f86e66bfd052fdcb0f324ee64dd0848b5042b0d23224"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",

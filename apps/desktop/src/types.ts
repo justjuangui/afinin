@@ -93,7 +93,8 @@ export type GroupBy =
   | { kind: "service" }
   | { kind: "region" }
   | { kind: "usage_type" }
-  | { kind: "tag"; key: string };
+  | { kind: "tag"; key: string }
+  | { kind: "resource" };
 
 export interface CostFilter {
   linked_accounts: string[];
@@ -246,4 +247,26 @@ export interface InventoryScan {
   scanned_at: string;
   resource_count: number;
   warnings: string[];
+}
+
+export interface CurConfig {
+  account_id: string;
+  bucket: string;
+  prefix: string;
+  export_name: string;
+  region: string;
+}
+
+export interface CurValidation {
+  checks: { status: "ok" | "warning" | "error"; message: string }[];
+  detected: CurConfig | null;
+  billing_periods: string[];
+}
+
+export interface CurStatus {
+  configs: CurConfig[];
+  billing_periods: string[];
+  first_date: string | null;
+  last_date: string | null;
+  last_ingested_at: string | null;
 }

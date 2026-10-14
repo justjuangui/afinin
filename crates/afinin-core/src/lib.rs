@@ -6,6 +6,7 @@
 
 pub mod aws;
 pub mod cost;
+pub mod cur;
 pub mod error;
 pub mod inventory;
 pub mod model;
@@ -24,6 +25,7 @@ pub use cost::{
     CostComparisonRow, CostFilter, CostMetric, CostOverview, CostQuery, CostSeries, DimensionValue,
     Granularity, GroupBy,
 };
+pub use cur::{CurConfig, CurValidation};
 pub use error::{Error, Result};
 pub use inventory::graph::{Application, Facet, Graph, GraphFilter, InventoryFacets, TagFilter};
 pub use inventory::{Resource, ResourceType};
@@ -32,7 +34,7 @@ pub use profiles::{AwsFiles, AwsProfile, ProfileKind};
 pub use secrets::{KeychainStore, MemoryStore, SecretStore};
 pub use settings::Settings;
 pub use sso::{SsoLoginPrompt, SsoLoginStatus};
-pub use storage::{ApiUsage, InventoryScan, Storage};
+pub use storage::{ApiUsage, CurStatus, InventoryScan, Storage};
 
 /// Where Afinín keeps its local data.
 #[derive(Debug, Clone)]
@@ -62,6 +64,8 @@ pub struct Afinin {
     aws_files: AwsFiles,
     pending_sso: Mutex<HashMap<String, sso::PendingLogin>>,
     syncing: Mutex<HashSet<String>>,
+    /// Scratch space for CUR downloads (deleted right after loading).
+    tmp_dir: PathBuf,
 }
 
 /// Outcome of syncing one account: costs and inventory run independently.
@@ -69,6 +73,7 @@ pub struct Afinin {
 pub struct AccountSyncReport {
     pub costs: Option<SyncReport>,
     pub inventory: Option<inventory::sync::InventoryReport>,
+    pub cur: Option<cur::CurReport>,
     pub errors: Vec<String>,
 }
 
@@ -94,7 +99,9 @@ impl Afinin {
         let key = secrets::get_or_create_key(secrets.as_ref(), storage::DB_KEY_SECRET)?;
         let storage = Storage::open(&paths.database(), &key)?;
         storage.reset_stale_syncs()?;
-        Ok(Self::with_storage(storage, secrets, aws_files))
+        let mut afinin = Self::with_storage(storage, secrets, aws_files);
+        afinin.tmp_dir = paths.data_dir.join("tmp");
+        Ok(afinin)
     }
 
     pub fn with_storage(
@@ -108,6 +115,7 @@ impl Afinin {
             aws_files,
             pending_sso: Mutex::default(),
             syncing: Mutex::default(),
+            tmp_dir: std::env::temp_dir().join("afinin"),
         }
     }
 
@@ -274,6 +282,14 @@ impl Afinin {
                     Ok(r) => report.costs = Some(r),
                     Err(e) => report.errors.push(format!("costs: {e}")),
                 }
+                let cur_config = self.db().cur_config(account_id)?;
+                if let Some(cfg) = cur_config {
+                    let store = cur::source::S3Store::new(&config, &cfg);
+                    match cur::ingest::ingest(&self.storage, &store, &cfg, &self.tmp_dir).await {
+                        Ok(r) => report.cur = Some(r),
+                        Err(e) => report.errors.push(format!("CUR: {e}")),
+                    }
+                }
                 if settings.inventory_enabled {
                     match inventory::sync::sync_inventory(
                         &self.storage,
@@ -396,7 +412,13 @@ impl Afinin {
         )?;
         Ok(inventory::graph::CostOverlay {
             by_service,
-            by_resource: Default::default(),
+            // With CUR, the overlay shows each resource's own cost.
+            by_resource: self.db().cur_resource_costs(
+                workspace_id,
+                metric,
+                &cost::dates::format(cost::dates::add_days(today, -30)),
+                &cost::dates::format(today),
+            )?,
             unit,
         })
     }
@@ -485,5 +507,31 @@ impl Afinin {
 
     pub fn inventory_scans(&self, workspace_id: &str) -> Result<Vec<InventoryScan>> {
         self.db().inventory_scans(workspace_id)
+    }
+
+    // ---- CUR (FR-15) ------------------------------------------------------
+
+    /// Checks an export with read-only calls, using the account's credentials.
+    pub async fn validate_cur(&self, cfg: &cur::CurConfig) -> Result<cur::CurValidation> {
+        let account = self.db().get_account(&cfg.account_id)?;
+        let profile = self.profile(&account.profile)?;
+        let config = aws::sdk_config(&profile, self.secrets.as_ref()).await?;
+        Ok(cur::source::validate(&config, cfg).await)
+    }
+
+    pub fn save_cur_config(&self, cfg: &cur::CurConfig) -> Result<()> {
+        self.db().save_cur_config(cfg)
+    }
+
+    pub fn cur_config(&self, account_id: &str) -> Result<Option<cur::CurConfig>> {
+        self.db().cur_config(account_id)
+    }
+
+    pub fn delete_cur_config(&self, account_id: &str) -> Result<()> {
+        self.db().delete_cur_config(account_id)
+    }
+
+    pub fn cur_status(&self, workspace_id: &str) -> Result<CurStatus> {
+        self.db().cur_status(workspace_id)
     }
 }

@@ -96,13 +96,16 @@ pub enum GroupBy {
     Region,
     UsageType,
     Tag(String),
+    /// Individual resource; needs CUR 2.0 data.
+    Resource,
 }
 
 impl GroupBy {
     /// Dataset holding the data for this grouping.
     pub(crate) fn dataset(&self) -> Dimension {
         match self {
-            Self::Account | Self::Service => Dimension::Service,
+            // `Resource` is served from CUR, not from a Cost Explorer dataset.
+            Self::Account | Self::Service | Self::Resource => Dimension::Service,
             Self::Region => Dimension::Region,
             Self::UsageType => Dimension::UsageType,
             Self::Tag(k) => Dimension::Tag(k.clone()),
@@ -144,7 +147,9 @@ impl CostQuery {
         if self.start >= self.end {
             return Err(Error::Other("start date must be before end date".into()));
         }
-        if !self.filter.services.is_empty() && self.group_by.dataset() != Dimension::Service {
+        if !self.filter.services.is_empty()
+            && (self.group_by.dataset() != Dimension::Service || self.group_by == GroupBy::Resource)
+        {
             return Err(Error::Other(
                 "with Cost Explorer data, the service filter is only available when grouping \
                  by service or account; enable CUR for full filtering"

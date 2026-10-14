@@ -67,6 +67,15 @@
         "tag:GetResources"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "CurExport",
+      "Effect": "Allow",
+      "Action": [
+        "bcm-data-exports:ListExports",
+        "bcm-data-exports:GetExport"
+      ],
+      "Resource": "*"
     }
   ]
 }

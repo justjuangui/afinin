@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { relativeTime } from "../format";
-import type { Account, Settings, Workspace } from "../types";
+import type { Account, CurStatus, Settings, Workspace } from "../types";
 import { AccountRow } from "./AccountRow";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { SsoLoginDialog } from "./SsoLoginDialog";
 import { ConfirmDialog } from "./Modal";
 import { CostDashboard } from "./CostDashboard";
 import { InventoryView } from "./InventoryView";
+import { CurSetupDialog } from "./CurSetupDialog";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
 
@@ -27,6 +28,8 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [tab, setTab] = useState<Tab>("costs");
   const [dataVersion, setDataVersion] = useState(0);
+  const [cur, setCur] = useState<CurStatus | null>(null);
+  const [curAccount, setCurAccount] = useState<Account | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [ssoAccount, setSsoAccount] = useState<Account | null>(null);
@@ -52,6 +55,14 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
       cancelled = true;
     };
   }, [workspace.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.curStatus(workspace.id).then((s) => !cancelled && setCur(s), (e) => !cancelled && setError(errorMessage(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace.id, dataVersion]);
 
   // Sync runs in the backend (manual or scheduled); refresh when it reports progress.
   useEffect(() => {
@@ -208,6 +219,7 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
               dataVersion={dataVersion}
               syncing={syncing}
               onSync={syncAll}
+              curAvailable={(cur?.billing_periods.length ?? 0) > 0}
             />
           ) : tab === "inventory" ? (
             <InventoryView
@@ -238,6 +250,8 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
                     testing={testing.has(a.id)}
                     onTest={() => test(a)}
                     onSync={() => syncOne(a)}
+                    hasCur={cur?.configs.some((c) => c.account_id === a.id) ?? false}
+                    onCur={() => setCurAccount(a)}
                     onSignIn={() => setSsoAccount(a)}
                     onRemove={() => setConfirming({ kind: "remove-account", account: a })}
                   />
@@ -288,6 +302,17 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
           onConfirm={() => {
             setConfirming(null);
             void deleteWorkspace();
+          }}
+        />
+      )}
+
+      {curAccount && (
+        <CurSetupDialog
+          account={curAccount}
+          onClose={() => setCurAccount(null)}
+          onSaved={() => {
+            setCurAccount(null);
+            setDataVersion((v) => v + 1);
           }}
         />
       )}

@@ -129,6 +129,41 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (source_account, scan_region)
     );
     "#,
+    // v4: CUR 2.0 (M3), aggregated per day and resource on load.
+    r#"
+    CREATE TABLE cur_configs (
+        account_id   TEXT PRIMARY KEY,
+        bucket       TEXT NOT NULL,
+        prefix       TEXT NOT NULL,
+        export_name  TEXT NOT NULL,
+        region       TEXT NOT NULL
+    );
+    CREATE TABLE cur_periods (
+        source_account  TEXT NOT NULL,
+        billing_period  TEXT NOT NULL,   -- YYYY-MM
+        fingerprint     TEXT NOT NULL,
+        ingested_at     TEXT NOT NULL,
+        row_count       BIGINT NOT NULL,
+        PRIMARY KEY (source_account, billing_period)
+    );
+    CREATE TABLE cur_daily (
+        source_account  TEXT NOT NULL,
+        billing_period  TEXT NOT NULL,
+        usage_date      TEXT NOT NULL,
+        linked_account  TEXT NOT NULL,
+        product_code    TEXT NOT NULL,
+        region          TEXT NOT NULL,
+        usage_type      TEXT NOT NULL,
+        resource_id     TEXT NOT NULL,
+        unblended       DOUBLE NOT NULL,
+        amortized       DOUBLE NOT NULL,
+        net_unblended   DOUBLE NOT NULL,
+        public_cost     DOUBLE NOT NULL,  -- on-demand public price, for savings rates (FR-34)
+        usage_amount    DOUBLE NOT NULL,
+        currency        TEXT NOT NULL
+    );
+    CREATE INDEX cur_daily_lookup ON cur_daily (usage_date, resource_id);
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -141,13 +176,18 @@ const ACCOUNT_DATA: &[(&str, &str)] = &[
     ("resources", "source_account"),
     ("relations", "source_account"),
     ("inventory_scans", "source_account"),
+    ("cur_configs", "account_id"),
+    ("cur_periods", "source_account"),
+    ("cur_daily", "source_account"),
 ];
 
 mod cost;
+mod cur;
 mod inventory;
 mod settings;
 
 pub use cost::ApiUsage;
+pub use cur::CurStatus;
 pub use inventory::InventoryScan;
 
 pub struct Storage {

@@ -3,6 +3,7 @@
 //! Tauri shell. Commands are thin wrappers over `afinin-core`; keep this IPC
 //! surface minimal (NFR-5).
 
+use afinin_core::cur::template;
 use afinin_core::{
     Account, Afinin, ApiUsage, AppPaths, AwsFiles, AwsProfile, CostComparisonRow, CostMetric,
     CostOverview, CostQuery, CostSeries, DimensionValue, Error, GroupBy, KeychainStore, Settings,
@@ -12,6 +13,7 @@ use afinin_core::{
     AccountSyncReport, Application, Facet, Graph, GraphFilter, InventoryFacets, InventoryScan,
     Resource,
 };
+use afinin_core::{CurConfig, CurStatus, CurValidation};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -340,6 +342,64 @@ fn inventory_scans(
     state.core()?.inventory_scans(&workspace_id)
 }
 
+// ---- CUR -------------------------------------------------------------------
+
+#[tauri::command]
+async fn validate_cur(state: State<'_, AppState>, config: CurConfig) -> CmdResult<CurValidation> {
+    state.core()?.validate_cur(&config).await
+}
+
+#[tauri::command]
+fn save_cur_config(state: State<'_, AppState>, config: CurConfig) -> CmdResult<()> {
+    state.core()?.save_cur_config(&config)
+}
+
+#[tauri::command]
+fn get_cur_config(state: State<'_, AppState>, account_id: String) -> CmdResult<Option<CurConfig>> {
+    state.core()?.cur_config(&account_id)
+}
+
+#[tauri::command]
+fn delete_cur_config(state: State<'_, AppState>, account_id: String) -> CmdResult<()> {
+    state.core()?.delete_cur_config(&account_id)
+}
+
+#[tauri::command]
+fn cur_status(state: State<'_, AppState>, workspace_id: String) -> CmdResult<CurStatus> {
+    state.core()?.cur_status(&workspace_id)
+}
+
+#[derive(serde::Serialize)]
+struct CurSetupHelp {
+    deploy_command: String,
+    read_policy: String,
+}
+
+#[tauri::command]
+fn cur_setup_help(bucket: String) -> CurSetupHelp {
+    CurSetupHelp {
+        deploy_command: template::deploy_command(&bucket),
+        read_policy: template::read_policy(&bucket),
+    }
+}
+
+/// Saves the CloudFormation template where the user chooses.
+#[tauri::command]
+async fn save_cur_template(app: AppHandle) -> CmdResult<bool> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("CloudFormation", &["yaml", "yml"])
+        .set_file_name("afinin-cur-export.yaml")
+        .blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path().map_err(|e| Error::Other(e.to_string()))?;
+    std::fs::write(path, template::CLOUDFORMATION)?;
+    Ok(true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -392,6 +452,13 @@ pub fn run() {
             applications,
             resource_neighbors,
             inventory_scans,
+            validate_cur,
+            save_cur_config,
+            get_cur_config,
+            delete_cur_config,
+            cur_status,
+            cur_setup_help,
+            save_cur_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Afinín");

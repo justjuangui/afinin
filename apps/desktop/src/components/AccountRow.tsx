@@ -9,11 +9,13 @@ interface Props {
   testing: boolean;
   onTest: () => void;
   onSync: () => void;
+  hasCur: boolean;
+  onCur: () => void;
   onSignIn: () => void;
   onRemove: () => void;
 }
 
-export function AccountRow({ account, testing, onTest, onSync, onSignIn, onRemove }: Props) {
+export function AccountRow({ account, testing, onTest, onSync, hasCur, onCur, onSignIn, onRemove }: Props) {
   const test = account.last_test;
   const sync = account.sync;
   return (
@@ -73,6 +75,9 @@ export function AccountRow({ account, testing, onTest, onSync, onSignIn, onRemov
         </button>
         <button className="ghost" onClick={onSync} disabled={sync?.state === "running"}>
           Sync
+        </button>
+        <button className="ghost" onClick={onCur} title="CUR 2.0: per-resource costs and real rates">
+          {hasCur ? "CUR ✓" : "Set up CUR"}
         </button>
         <button className="ghost danger" onClick={onRemove}>
           Remove

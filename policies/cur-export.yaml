@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# CUR 2.0 Data Export for Afinín.
+# Deploy in the management (payer) account, in us-east-1 (where AWS Data Exports runs):
+#
+#   aws cloudformation deploy --region us-east-1 --stack-name afinin-cur \
+#     --template-file cur-export.yaml --parameter-overrides BucketName=<unique-bucket-name>
+#
+# AWS delivers the first files within 24 hours and refreshes them daily.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CUR 2.0 export (daily, Parquet, with resource IDs) read by Afinín.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Globally unique name for the new S3 bucket that receives the export.
+  ExportName:
+    Type: String
+    Default: afinin
+    AllowedPattern: "[0-9A-Za-z!\\-_.*'()]+"
+  Prefix:
+    Type: String
+    Default: cur
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowDataExportsDelivery
+            Effect: Allow
+            Principal:
+              Service:
+                - billingreports.amazonaws.com
+                - bcm-data-exports.amazonaws.com
+            Action:
+              - s3:PutObject
+              - s3:GetBucketPolicy
+            Resource:
+              - !GetAtt Bucket.Arn
+              - !Sub "${Bucket.Arn}/*"
+            Condition:
+              StringLike:
+                aws:SourceAccount: !Ref AWS::AccountId
+                aws:SourceArn:
+                  - !Sub "arn:${AWS::Partition}:cur:us-east-1:${AWS::AccountId}:definition/*"
+                  - !Sub "arn:${AWS::Partition}:bcm-data-exports:us-east-1:${AWS::AccountId}:export/*"
+
+  Export:
+    Type: AWS::BCMDataExports::Export
+    DependsOn: BucketPolicy
+    Properties:
+      Export:
+        Name: !Ref ExportName
+        Description: CUR 2.0 for Afinín
+        DataQuery:
+          QueryStatement: >-
+            SELECT bill_payer_account_id, line_item_usage_account_id, line_item_usage_start_date,
+            line_item_usage_end_date, line_item_product_code, product_region_code, line_item_usage_type,
+            line_item_operation, line_item_resource_id, line_item_line_item_type, line_item_usage_amount,
+            line_item_unblended_cost, line_item_net_unblended_cost, line_item_currency_code,
+            pricing_public_on_demand_cost, savings_plan_savings_plan_effective_cost,
+            savings_plan_total_commitment_to_date, savings_plan_used_commitment, reservation_effective_cost,
+            reservation_unused_amortized_upfront_fee_for_billing_period, reservation_unused_recurring_fee,
+            reservation_reservation_a_r_n, resource_tags
+            FROM COST_AND_USAGE_REPORT
+          TableConfigurations:
+            COST_AND_USAGE_REPORT:
+              TIME_GRANULARITY: DAILY
+              INCLUDE_RESOURCES: "TRUE"
+              INCLUDE_MANUAL_DISCOUNT_COMPATIBILITY: "FALSE"
+              INCLUDE_SPLIT_COST_ALLOCATION_DATA: "FALSE"
+        DestinationConfigurations:
+          S3Destination:
+            S3Bucket: !Ref Bucket
+            S3Prefix: !Ref Prefix
+            S3Region: !Ref AWS::Region
+            S3OutputConfigurations:
+              OutputType: CUSTOM
+              Format: PARQUET
+              Compression: PARQUET
+              Overwrite: OVERWRITE_REPORT
+        RefreshCadence:
+          Frequency: SYNCHRONOUS
+
+Outputs:
+  Bucket:
+    Value: !Ref Bucket
+  Prefix:
+    Value: !Ref Prefix
+  ExportName:
+    Value: !Ref ExportName
