@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Signed installers for macOS, Linux and Windows, the signed update manifest
+# and SBOMs (NFR-6). Push a tag like `v0.2.0` to create a draft release.
+# Required secrets are listed in RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+        working-directory: apps/desktop
+
+      - name: Inject update public key
+        shell: bash
+        env:
+          TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          test -n "$TAURI_UPDATER_PUBKEY" || { echo "Set the TAURI_UPDATER_PUBKEY repository variable (see RELEASING.md)"; exit 1; }
+          node -e 'const f="apps/desktop/src-tauri/tauri.release.conf.json";const c=require("./"+f);c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBKEY;require("fs").writeFileSync(f,JSON.stringify(c,null,2))'
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing and notarization (optional until configured).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Afinín ${{ github.ref_name }}
+          releaseBody: See CHANGELOG.md. Verify downloads with the SBOMs and the update signatures.
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }} --features updater --config src-tauri/tauri.release.conf.json
+
+  sbom:
+    name: SBOM
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Rust SBOM (CycloneDX)
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --override-filename afinin-rust.cdx
+          find . -name 'afinin-rust.cdx.json' -exec cp {} . \; -quit
+      - name: npm SBOM (CycloneDX)
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npx --yes @cyclonedx/cyclonedx-npm --omit dev --output-file ../../afinin-npm.cdx.json
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" afinin-rust.cdx.json afinin-npm.cdx.json --clobber

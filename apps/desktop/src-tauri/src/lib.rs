@@ -463,6 +463,107 @@ fn clear_llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<
     state.core()?.clear_llm_log(&workspace_id)
 }
 
+// ---- backup (FR-53) -----------------------------------------------------------
+
+/// Asks where to save, then writes a password-encrypted backup. `false` if cancelled.
+#[tauri::command]
+async fn export_backup(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    password: String,
+) -> CmdResult<bool> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("Afinín backup", &["afinin"])
+        .set_file_name("afinin-backup.afinin")
+        .blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path().map_err(|e| Error::Other(e.to_string()))?;
+    state.core()?.export_backup(&path, &password)?;
+    Ok(true)
+}
+
+/// Asks for a backup file and replaces all local data with it. `false` if cancelled.
+#[tauri::command]
+async fn import_backup(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    password: String,
+) -> CmdResult<bool> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("Afinín backup", &["afinin"])
+        .blocking_pick_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path().map_err(|e| Error::Other(e.to_string()))?;
+    state.core()?.import_backup(&path, &password)?;
+    Ok(true)
+}
+
+// ---- updates (NFR-6) ---------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
+}
+
+/// Checks for a signed update. Always `None` in builds without the updater.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> CmdResult<Option<UpdateInfo>> {
+    #[cfg(feature = "updater")]
+    {
+        use tauri_plugin_updater::UpdaterExt;
+        let updater = app.updater().map_err(|e| Error::Other(e.to_string()))?;
+        let update = updater
+            .check()
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(update.map(|u| UpdateInfo {
+            version: u.version,
+            notes: u.body,
+        }))
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
+/// Downloads, verifies (signature) and installs the update, then restarts.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> CmdResult<()> {
+    #[cfg(feature = "updater")]
+    {
+        use tauri_plugin_updater::UpdaterExt;
+        let updater = app.updater().map_err(|e| Error::Other(e.to_string()))?;
+        if let Some(update) = updater
+            .check()
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?
+        {
+            update
+                .download_and_install(|_, _| {}, || {})
+                .await
+                .map_err(|e| Error::Other(e.to_string()))?;
+            app.restart();
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Err(Error::Other("this build has no auto-updater".into()))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -476,9 +577,12 @@ pub fn run() {
         tracing::error!("failed to open local data: {e}");
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .manage(AppState(core))
         .setup(|app| {
             spawn_scheduler(app.handle().clone());
@@ -530,6 +634,10 @@ pub fn run() {
             has_llm_api_key,
             llm_log,
             clear_llm_log,
+            export_backup,
+            import_backup,
+            check_update,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Afinín");

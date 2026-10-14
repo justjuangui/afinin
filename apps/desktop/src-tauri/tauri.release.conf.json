@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "SET_BY_RELEASE_WORKFLOW",
+      "endpoints": ["https://github.com/juancarvajalsas/afinin/releases/latest/download/latest.json"]
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { WorkspaceView } from "./components/WorkspaceView";
 import { Onboarding } from "./components/Onboarding";
 import { SettingsView } from "./components/SettingsView";
+import { applyTheme } from "./theme";
 
 export default function App() {
   const [startupError, setStartupError] = useState<string | null>(null);
@@ -14,12 +15,20 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<"workspace" | "settings">("workspace");
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [update, setUpdate] = useState<{ version: string } | null>(null);
+  const [installing, setInstalling] = useState(false);
+
+  // Signed updates (release builds only); a failed check is silent.
+  useEffect(() => {
+    api.checkUpdate().then(setUpdate, () => setUpdate(null));
+  }, []);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
       const [list, s] = await Promise.all([api.listWorkspaces(), api.getSettings()]);
       setSettings(s);
+      applyTheme(s.theme);
       setWorkspaces(list);
       setSelectedId((cur) => (cur && list.some((w) => w.id === cur) ? cur : (list[0]?.id ?? null)));
     } catch (e) {
@@ -64,8 +73,31 @@ export default function App() {
 
   const selected = workspaces.find((w) => w.id === selectedId) ?? workspaces[0];
 
+  const banner = update && (
+    <div className="update-banner" role="status">
+      Afinín {update.version} is available.
+      <button
+        className="primary small"
+        disabled={installing}
+        onClick={() => {
+          setInstalling(true);
+          api.installUpdate().catch((e) => {
+            setError(errorMessage(e));
+            setInstalling(false);
+          });
+        }}
+      >
+        {installing ? "Installing…" : "Install and restart"}
+      </button>
+      <button className="ghost small" onClick={() => setUpdate(null)}>
+        Later
+      </button>
+    </div>
+  );
+
   return (
     <div className="layout">
+      {banner}
       <Sidebar
         workspaces={workspaces}
         selectedId={view === "workspace" ? selected.id : null}
@@ -78,7 +110,14 @@ export default function App() {
         onCreate={createWorkspace}
       />
       {view === "settings" ? (
-        <SettingsView settings={settings} onSaved={setSettings} />
+        <SettingsView
+          settings={settings}
+          onSaved={(s) => {
+            setSettings(s);
+            applyTheme(s.theme);
+          }}
+          onRestored={reload}
+        />
       ) : (
         <WorkspaceView
           key={selected.id}

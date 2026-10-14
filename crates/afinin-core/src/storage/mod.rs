@@ -213,6 +213,10 @@ const MIGRATIONS: &[&str] = &[
         created_at       TEXT NOT NULL
     );
     "#,
+    // v7: permission check results (FR-3).
+    r#"
+    ALTER TABLE accounts ADD COLUMN test_missing TEXT;
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -237,6 +241,7 @@ mod cur;
 mod findings;
 mod inventory;
 mod llm;
+mod maintenance;
 mod settings;
 
 pub use cost::ApiUsage;
@@ -282,7 +287,7 @@ impl Storage {
         Ok(storage)
     }
 
-    fn migrate(&self) -> Result<()> {
+    pub(crate) fn migrate(&self) -> Result<()> {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);",
         )?;
@@ -414,7 +419,7 @@ impl Storage {
         let mut stmt = self.conn.prepare(
             "SELECT a.id, workspace_id, name, profile, kind, aws_account_id,
                     test_ok, tested_at, test_arn, test_error, created_at,
-                    s.state, s.started_at, s.finished_at, s.last_success_at, s.error
+                    s.state, s.started_at, s.finished_at, s.last_success_at, s.error, a.test_missing
              FROM accounts a LEFT JOIN account_sync s ON s.account_id = a.id
              WHERE ?1 IS NULL OR workspace_id = ?1
              ORDER BY name",
@@ -428,7 +433,7 @@ impl Storage {
             .query_row(
                 "SELECT a.id, workspace_id, name, profile, kind, aws_account_id,
                         test_ok, tested_at, test_arn, test_error, created_at,
-                        s.state, s.started_at, s.finished_at, s.last_success_at, s.error
+                        s.state, s.started_at, s.finished_at, s.last_success_at, s.error, a.test_missing
                  FROM accounts a LEFT JOIN account_sync s ON s.account_id = a.id
                  WHERE a.id = ?",
                 params![id],
@@ -458,7 +463,7 @@ impl Storage {
     pub fn record_connection_test(&self, id: &str, test: &ConnectionTest) -> Result<()> {
         self.conn.execute(
             "UPDATE accounts SET
-                test_ok = ?, tested_at = ?, test_arn = ?, test_error = ?,
+                test_ok = ?, tested_at = ?, test_arn = ?, test_error = ?, test_missing = ?,
                 aws_account_id = coalesce(?, aws_account_id)
              WHERE id = ?",
             params![
@@ -466,6 +471,7 @@ impl Storage {
                 test.tested_at,
                 test.arn,
                 test.error,
+                serde_json::to_string(&test.missing_permissions).unwrap_or_default(),
                 test.aws_account_id,
                 id
             ],
@@ -508,6 +514,10 @@ fn row_to_account(r: &duckdb::Row<'_>) -> duckdb::Result<Account> {
             aws_account_id: aws_account_id.clone(),
             arn: r.get(8)?,
             error: r.get(9)?,
+            missing_permissions: r
+                .get::<_, Option<String>>(16)?
+                .and_then(|m| serde_json::from_str(&m).ok())
+                .unwrap_or_default(),
         }),
         _ => None,
     };
@@ -567,6 +577,7 @@ mod tests {
             aws_account_id: Some("222222222222".into()),
             arn: Some("arn:aws:sts::222222222222:assumed-role/ViewOnly/me".into()),
             error: None,
+            missing_permissions: vec!["ec2:DescribeVolumes".into()],
         };
         db.record_connection_test(&acc.id, &test).unwrap();
         let acc = db.get_account(&acc.id).unwrap();

@@ -12,6 +12,11 @@ rust-version.workspace = true
 name = "afinin_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Signed auto-updates (NFR-6). Release builds enable it together with
+# tauri.release.conf.json, which carries the update public key.
+updater = ["dep:tauri-plugin-updater"]
+
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 
@@ -23,4 +28,5 @@ tracing.workspace = true
 tauri = { version = "2.12", features = [] }
 tauri-plugin-opener = "2.7"
 tauri-plugin-dialog = "2.8"
+tauri-plugin-updater = { version = "2.13", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

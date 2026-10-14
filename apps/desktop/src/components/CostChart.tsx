@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
 import { BarChart } from "echarts/charts";
 import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { money, periodLabel } from "../format";
+import { useDarkMode } from "../theme";
 import type { Granularity } from "../types";
 
 echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
@@ -26,18 +27,6 @@ interface Props {
   estimatedPeriods: string[];
 }
 
-function useColorScheme(): string {
-  const query = "(prefers-color-scheme: dark)";
-  const [dark, setDark] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const mql = window.matchMedia(query);
-    const onChange = (e: MediaQueryListEvent) => setDark(e.matches);
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
-  return dark ? "dark" : "light";
-}
-
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -45,7 +34,7 @@ const escapeHtml = (s: string) =>
 export function CostChart({ periods, series, granularity, unit, estimatedPeriods }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
-  const scheme = useColorScheme();
+  const scheme = useDarkMode() ? "dark" : "light";
 
   useEffect(() => {
     if (!el.current) return;

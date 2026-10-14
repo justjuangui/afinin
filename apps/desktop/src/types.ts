@@ -38,6 +38,7 @@ export interface ConnectionTest {
   aws_account_id: string | null;
   arn: string | null;
   error: string | null;
+  missing_permissions: string[];
 }
 
 export interface Account {
@@ -165,6 +166,8 @@ export interface Settings {
   commitments_enabled: boolean;
   import_aws_anomalies: boolean;
   llm: LlmSettings;
+  retention_months: number;
+  theme: "system" | "light" | "dark";
 }
 
 export interface ApiUsage {

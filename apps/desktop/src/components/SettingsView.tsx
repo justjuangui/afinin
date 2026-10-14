@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { money } from "../format";
+import { ConfirmDialog } from "./Modal";
 import type { Account, ApiUsage, CostMetric, LlmSettings, ProviderKind, Settings } from "../types";
 
 const PROVIDERS: { id: ProviderKind; label: string }[] = [
@@ -26,6 +27,8 @@ function isLocal(llm: LlmSettings): boolean {
 interface Props {
   settings: Settings;
   onSaved: (s: Settings) => void;
+  /** Local data was replaced by a backup. */
+  onRestored: () => void;
 }
 
 const INTERVALS = [
@@ -36,7 +39,7 @@ const INTERVALS = [
   { hours: 168, label: "Weekly" },
 ];
 
-export function SettingsView({ settings, onSaved }: Props) {
+export function SettingsView({ settings, onSaved, onRestored }: Props) {
   const [draft, setDraft] = useState(settings);
   const [tags, setTags] = useState(settings.cost_tag_keys.join(", "));
   const [regions, setRegions] = useState(settings.inventory_regions.join(", "));
@@ -44,6 +47,8 @@ export function SettingsView({ settings, onSaved }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [hasKey, setHasKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
+  const [backupPassword, setBackupPassword] = useState("");
+  const [confirmRestore, setConfirmRestore] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,6 +98,28 @@ export function SettingsView({ settings, onSaved }: Props) {
     }
   };
 
+  const backup = async () => {
+    try {
+      if (await api.exportBackup(backupPassword)) setStatus("Backup saved");
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  const restore = async () => {
+    setConfirmRestore(false);
+    try {
+      if (await api.importBackup(backupPassword)) {
+        setStatus("Backup restored");
+        onRestored();
+      }
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
   const totalCost = usage?.reduce((s, u) => s + u.cost_usd, 0) ?? 0;
   const totalCalls = usage?.reduce((s, u) => s + u.calls, 0) ?? 0;
 
@@ -106,6 +133,16 @@ export function SettingsView({ settings, onSaved }: Props) {
       </header>
 
       <form className="panel settings" onSubmit={save} onChange={() => setStatus(null)}>
+        <h2>Appearance</h2>
+        <label>
+          Theme
+          <select value={draft.theme} onChange={(e) => setDraft({ ...draft, theme: e.target.value as Settings["theme"] })}>
+            <option value="system">Same as the system</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+
         <h2>Sync</h2>
         <label>
           Automatic sync
@@ -141,6 +178,22 @@ export function SettingsView({ settings, onSaved }: Props) {
             value={draft.monthly_history_months}
             onChange={(e) => setDraft({ ...draft, monthly_history_months: Number(e.target.value) })}
           />
+        </label>
+
+        <label>
+          Keep history for
+          <select
+            value={draft.retention_months}
+            onChange={(e) => setDraft({ ...draft, retention_months: Number(e.target.value) })}
+          >
+            <option value={0}>Forever</option>
+            <option value={12}>12 months</option>
+            <option value={24}>2 years</option>
+            <option value={36}>3 years</option>
+          </select>
+          <span className="hint">
+            Afinín keeps cost history beyond Cost Explorer&apos;s window so trends and anomalies have context.
+          </span>
         </label>
 
         <h2>Inventory</h2>
@@ -324,6 +377,42 @@ export function SettingsView({ settings, onSaved }: Props) {
           <button className="primary">Save settings</button>
         </div>
       </form>
+
+      <section className="panel settings">
+        <h2>Backup &amp; restore</h2>
+        <p className="muted small">
+          One password-encrypted file with workspaces, accounts, cost history, findings state and settings. Credentials and
+          API keys are never included; restoring on another machine needs the same AWS profile names.
+        </p>
+        <label>
+          Backup password
+          <input
+            type="password"
+            autoComplete="new-password"
+            placeholder="At least 10 characters"
+            value={backupPassword}
+            onChange={(e) => setBackupPassword(e.target.value)}
+          />
+        </label>
+        <div className="form-actions">
+          <button className="ghost danger" disabled={backupPassword.length < 10} onClick={() => setConfirmRestore(true)}>
+            Restore from backup…
+          </button>
+          <button className="primary" disabled={backupPassword.length < 10} onClick={backup}>
+            Save backup…
+          </button>
+        </div>
+      </section>
+
+      {confirmRestore && (
+        <ConfirmDialog
+          title="Restore from backup"
+          message="Restoring replaces all local data in Afinín with the backup's contents. This can't be undone."
+          confirmLabel="Choose file and restore"
+          onCancel={() => setConfirmRestore(false)}
+          onConfirm={restore}
+        />
+      )}
 
       <section className="panel">
         <h2>What Afinín costs you on AWS this month</h2>

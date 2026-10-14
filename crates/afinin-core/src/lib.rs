@@ -5,6 +5,7 @@
 //! This crate is independent of Tauri so a CLI or TUI can reuse it.
 
 pub mod aws;
+pub mod backup;
 pub mod cost;
 pub mod cur;
 pub mod error;
@@ -12,6 +13,7 @@ pub mod findings;
 pub mod inventory;
 pub mod llm;
 pub mod model;
+pub mod permissions;
 pub mod profiles;
 pub mod secrets;
 pub mod settings;
@@ -330,6 +332,16 @@ impl Afinin {
                     self.refresh_finding_inputs(&config, account_id, &settings)
                         .await,
                 );
+            }
+        }
+
+        if settings.retention_months > 0 {
+            let cutoff = cost::dates::format(cost::dates::add_months(
+                cost::dates::today_utc(),
+                -(settings.retention_months as i32),
+            ));
+            if let Err(e) = self.db().apply_retention(&cutoff) {
+                report.warnings.push(format!("retention: {e}"));
             }
         }
 
@@ -864,6 +876,41 @@ impl Afinin {
             commitments,
             unit: usage.unit,
         })
+    }
+
+    // ---- backup (FR-53) --------------------------------------------------
+
+    /// Writes all local data (never credentials) to a password-encrypted file.
+    pub fn export_backup(&self, path: &std::path::Path, password: &str) -> Result<()> {
+        if password.chars().count() < backup::MIN_PASSWORD_LEN {
+            return Err(Error::Other(format!(
+                "use a password of at least {} characters",
+                backup::MIN_PASSWORD_LEN
+            )));
+        }
+        std::fs::create_dir_all(&self.tmp_dir)?;
+        let tmp = backup::temp_dir(&self.tmp_dir)?;
+        let export = tmp.0.join("db");
+        self.db().export_to_dir(&export)?;
+        let archive = backup::tar_dir(&export)?;
+        drop(tmp);
+        std::fs::write(path, backup::encrypt(&archive, password)?)?;
+        Ok(())
+    }
+
+    /// Replaces all local data with a backup. Accounts reference AWS profile
+    /// names, which must exist on this machine to sync.
+    pub fn import_backup(&self, path: &std::path::Path, password: &str) -> Result<()> {
+        let archive = backup::decrypt(&std::fs::read(path)?, password)?;
+        std::fs::create_dir_all(&self.tmp_dir)?;
+        let tmp = backup::temp_dir(&self.tmp_dir)?;
+        backup::untar(&archive, &tmp.0)?;
+        self.db().import_from_dir(&tmp.0)?;
+        self.conversations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        Ok(())
     }
 
     // ---- assistant (FR-40..FR-46) -----------------------------------------

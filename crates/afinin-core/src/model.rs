@@ -57,6 +57,9 @@ pub struct ConnectionTest {
     pub aws_account_id: Option<String>,
     pub arn: Option<String>,
     pub error: Option<String>,
+    /// Read-only IAM actions that were denied (FR-3).
+    #[serde(default)]
+    pub missing_permissions: Vec<String>,
 }
 
 pub(crate) fn now_rfc3339() -> String {

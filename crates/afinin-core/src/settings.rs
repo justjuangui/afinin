@@ -36,6 +36,18 @@ pub struct Settings {
     pub import_aws_anomalies: bool,
     /// Optional assistant (FR-40); the API key lives in the keychain.
     pub llm: LlmSettings,
+    /// Months of cost history and request logs to keep; 0 keeps everything (FR-51).
+    pub retention_months: u32,
+    pub theme: Theme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 impl Default for Settings {
@@ -53,12 +65,19 @@ impl Default for Settings {
             commitments_enabled: true,
             import_aws_anomalies: false,
             llm: LlmSettings::default(),
+            retention_months: 0,
+            theme: Theme::System,
         }
     }
 }
 
 impl Settings {
     pub(crate) fn validate(&self) -> Result<()> {
+        if self.retention_months != 0 && self.retention_months < 3 {
+            return Err(Error::Other(
+                "keep at least 3 months of history (or 0 to keep everything)".into(),
+            ));
+        }
         if !(1..=365).contains(&self.daily_history_days) {
             return Err(Error::Other(
                 "daily history must be between 1 and 365 days".into(),

@@ -136,21 +136,24 @@ async fn sso_role_credentials(
 pub async fn test_connection(profile: &AwsProfile, secrets: &dyn SecretStore) -> ConnectionTest {
     let result = async {
         let config = sdk_config(profile, secrets).await?;
-        aws_sdk_sts::Client::new(&config)
+        let identity = aws_sdk_sts::Client::new(&config)
             .get_caller_identity()
             .send()
             .await
-            .map_err(Error::aws)
+            .map_err(Error::aws)?;
+        let missing = crate::permissions::missing_permissions(&config).await;
+        Ok::<_, Error>((identity, missing))
     }
     .await;
 
     match result {
-        Ok(out) => ConnectionTest {
+        Ok((out, missing)) => ConnectionTest {
             ok: true,
             tested_at: now_rfc3339(),
             aws_account_id: out.account().map(str::to_owned),
             arn: out.arn().map(str::to_owned),
             error: None,
+            missing_permissions: missing.into_iter().map(str::to_owned).collect(),
         },
         Err(e) => ConnectionTest {
             ok: false,
@@ -158,6 +161,7 @@ pub async fn test_connection(profile: &AwsProfile, secrets: &dyn SecretStore) ->
             aws_account_id: None,
             arn: None,
             error: Some(e.to_string()),
+            missing_permissions: Vec::new(),
         },
     }
 }

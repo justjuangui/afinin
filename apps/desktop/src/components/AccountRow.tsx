@@ -48,6 +48,13 @@ export function AccountRow({ account, testing, onTest, onSync, hasCur, onCur, on
           </span>
         )}
         {test && !test.ok && !testing && <div className="error small clamp">{test.error}</div>}
+        {test?.ok && !testing && test.missing_permissions.length > 0 && (
+          <div className="small warn-text" title={test.missing_permissions.join("\n")}>
+            ⚠ Missing {test.missing_permissions.length} permission{test.missing_permissions.length === 1 ? "" : "s"}:{" "}
+            {test.missing_permissions.slice(0, 2).join(", ")}
+            {test.missing_permissions.length > 2 && "…"}
+          </div>
+        )}
       </td>
       <td>
         {!sync ? (

@@ -99,6 +99,10 @@ export const api = {
   hasLlmApiKey: () => invoke<boolean>("has_llm_api_key"),
   llmLog: (workspaceId: string) => invoke<LlmLogEntry[]>("llm_log", { workspaceId }),
   clearLlmLog: (workspaceId: string) => invoke<void>("clear_llm_log", { workspaceId }),
+  exportBackup: (password: string) => invoke<boolean>("export_backup", { password }),
+  importBackup: (password: string) => invoke<boolean>("import_backup", { password }),
+  checkUpdate: () => invoke<{ version: string; notes: string | null } | null>("check_update"),
+  installUpdate: () => invoke<void>("install_update"),
   exportCsv: (query: CostQuery, compare: [string, string] | null, fileName: string) =>
     invoke<boolean>("export_csv", { query, compare, fileName }),
 };

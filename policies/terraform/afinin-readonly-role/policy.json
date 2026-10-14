@@ -1,0 +1,90 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Identity",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Organizations",
+      "Effect": "Allow",
+      "Action": [
+        "organizations:ListAccounts",
+        "organizations:DescribeOrganization"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CostExplorer",
+      "Effect": "Allow",
+      "Action": [
+        "ce:Get*",
+        "ce:Describe*",
+        "ce:List*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Inventory",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeRegions",
+        "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNatGateways",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeSnapshots",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBClusters",
+        "lambda:ListFunctions",
+        "lambda:ListEventSourceMappings",
+        "s3:ListAllMyBuckets",
+        "dynamodb:ListTables",
+        "dynamodb:DescribeTable",
+        "elasticache:DescribeCacheClusters",
+        "elasticache:DescribeCacheSubnetGroups",
+        "ecs:ListClusters",
+        "ecs:DescribeClusters",
+        "ecs:ListServices",
+        "ecs:DescribeServices",
+        "eks:ListClusters",
+        "eks:DescribeCluster",
+        "cloudfront:ListDistributions",
+        "apigateway:GET",
+        "sqs:ListQueues",
+        "sns:ListTopics",
+        "sns:ListSubscriptions",
+        "tag:GetResources"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CurExport",
+      "Effect": "Allow",
+      "Action": [
+        "bcm-data-exports:ListExports",
+        "bcm-data-exports:GetExport"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "PublicPrices",
+      "Effect": "Allow",
+      "Action": [
+        "pricing:GetProducts"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
