@@ -129,6 +129,7 @@ const ResourceNode = memo(function ResourceNode({ data, selected }: NodeProps<No
       <span className="rnode-text">
         <span className="rnode-label">{node.label}</span>
         <span className="rnode-sub">
+          {node.context ? "connected · " : ""}
           {node.type_label}
           {state ? ` · ${state}` : ""}
         </span>
@@ -572,6 +573,7 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
                   ))}
                 </span>
                 <span className="muted">low → high</span>
+                {graph.nodes.some((n) => n.context) && <span className="legend-context">connected, not a match</span>}
               </div>
             )}
           </div>
@@ -628,6 +630,11 @@ function Details({
           ×
         </button>
       </header>
+      {node.context && (
+        <Callout tone="info" title="Connected, not a match">
+          Shown because it connects to a resource that matches the filters. It doesn’t match them itself.
+        </Callout>
+      )}
       <button className="ghost explain" onClick={onExplain}>
         Explain this resource
       </button>
