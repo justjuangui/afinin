@@ -30,6 +30,7 @@ import type {
   RelationKind,
 } from "../types";
 import { MultiSelect } from "./MultiSelect";
+import { Callout } from "./Callout";
 
 const SHORT: Record<string, string> = {
   "cloudfront:distribution": "CF",
@@ -306,9 +307,9 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
   return (
     <div className="inventory">
       {error && (
-        <p className="error banner" onClick={() => setError(null)} title="Dismiss">
+        <Callout tone="danger" title="Couldn’t load the inventory" onDismiss={() => setError(null)} dismissLabel="Dismiss">
           {error}
-        </p>
+        </Callout>
       )}
 
       <section className="filters">
@@ -668,7 +669,11 @@ function ApplicationsPanel({
           </span>
         )}
       </header>
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Callout tone="danger" title="Couldn’t load applications">
+          {error}
+        </Callout>
+      )}
       <table className="breakdown">
         <thead>
           <tr>

@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import { CostChart, type ChartSeries } from "./CostChart";
 import { MultiSelect } from "./MultiSelect";
+import { Callout } from "./Callout";
 
 /** Categorical slots of the validated chart palette; the rest folds into "Other". */
 const SLOTS = 7;
@@ -212,9 +213,9 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
   return (
     <div className="dashboard">
       {error && (
-        <p className="error banner" onClick={() => setError(null)} title="Dismiss">
+        <Callout tone="danger" title="Couldn’t load costs" onDismiss={() => setError(null)} dismissLabel="Dismiss">
           {error}
-        </p>
+        </Callout>
       )}
 
       {overview && (

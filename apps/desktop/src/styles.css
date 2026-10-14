@@ -177,7 +177,6 @@ label { display: block; font-weight: 500; }
 .muted { color: var(--muted); font-weight: 400; }
 .small { font-size: 12px; }
 .error { color: var(--danger); }
-.error.banner { background: var(--danger-soft); padding: 8px 12px; border-radius: var(--radius); cursor: pointer; }
 .clamp { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .stack.center { align-items: center; text-align: center; }
@@ -247,8 +246,29 @@ table.accounts { width: 100%; border-collapse: collapse; background: var(--surfa
 .profile.selected { border-color: var(--accent); background: var(--accent-soft); }
 .profile input { width: auto; margin-top: 4px; }
 
-.callout { padding: 12px 14px; border-radius: var(--radius); background: var(--sidebar); display: flex; flex-direction: column; gap: 6px; }
-.callout.warn { background: var(--warn-soft); }
+/* Callouts: messages that need the user's attention (see components/Callout.tsx).
+   Tone = what the user should do: action · warn · danger · success · info. */
+.callout {
+  --tone: var(--muted);
+  --tone-soft: var(--sidebar);
+  display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: start;
+  padding: 12px 14px; border-radius: var(--radius);
+  background: var(--tone-soft); border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  border-left: 4px solid var(--tone);
+}
+.callout.action { --tone: var(--accent); --tone-soft: var(--accent-soft); }
+.callout.warn { --tone: var(--warn); --tone-soft: var(--warn-soft); }
+.callout.danger { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+.callout.success { --tone: var(--ok); --tone-soft: var(--ok-soft); }
+.callout-icon {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--tone); color: var(--surface); font-size: 12px; font-weight: 700; line-height: 1;
+}
+.callout-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.callout-title { font-size: 13.5px; color: var(--text); }
+.callout-text { font-size: 13px; color: var(--text); opacity: 0.85; }
+.callout-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.callout-actions button.primary { background: var(--tone); border-color: var(--tone); }
 
 .user-code { font-family: ui-monospace, Menlo, monospace; font-size: 30px; font-weight: 700; letter-spacing: 0.15em; padding: 10px 20px; border: 1px dashed var(--accent); border-radius: var(--radius); }
 
@@ -478,5 +498,6 @@ pre.code.tall { max-height: 320px; overflow: auto; }
 .log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .log-head { width: 100%; display: grid; grid-template-columns: 1.2fr 1.4fr auto auto; gap: 8px; text-align: left; font-size: 12px; border: 1px solid var(--border); }
 .warn-text { color: var(--warn); }
-.update-banner { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; gap: 10px; align-items: center; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); }
+.toasts { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 30; width: min(460px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; }
+.toasts .callout { box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); }
 button.small { padding: 3px 9px; font-size: 12px; }

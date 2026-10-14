@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { KIND_LABEL, KIND_RANK } from "../profileKind";
 import type { Account, AwsProfile } from "../types";
+import { Callout } from "./Callout";
 import { DocsLink } from "./DocsLink";
 import { Modal } from "./Modal";
 
@@ -60,16 +61,20 @@ export function AddAccountDialog({ workspaceId, existingProfiles, onClose, onAdd
         </>
       }
     >
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Callout tone="danger" title={profiles === null ? "Couldn’t read your AWS profiles" : "Couldn’t add the account"}>
+          {error}
+        </Callout>
+      )}
       {profiles === null && !error && <p className="muted">Reading ~/.aws/config…</p>}
       {profiles !== null && available.length === 0 && (
-        <div className="callout">
-          <p>No unused AWS profiles found.</p>
-          <p className="muted">
-            Configure one with <code>aws configure sso</code>, then reopen this dialog.{" "}
-            <DocsLink href={SSO_DOCS}>How to set up SSO</DocsLink>
-          </p>
-        </div>
+        <Callout
+          tone="action"
+          title="No unused AWS profiles found"
+          actions={<DocsLink href={SSO_DOCS}>How to set up SSO</DocsLink>}
+        >
+          Configure one with <code>aws configure sso</code>, then reopen this dialog.
+        </Callout>
       )}
 
       {available.length > 0 && (
@@ -107,11 +112,13 @@ export function AddAccountDialog({ workspaceId, existingProfiles, onClose, onAdd
       )}
 
       {profile?.kind === "static_keys" && (
-        <div className="callout warn">
-          <strong>Long-lived access keys are discouraged.</strong> They never expire and are a
-          common source of leaks. Prefer IAM Identity Center (SSO).{" "}
-          <DocsLink href={SSO_DOCS}>Migrate to SSO</DocsLink>
-        </div>
+        <Callout
+          tone="warn"
+          title="Long-lived access keys are discouraged"
+          actions={<DocsLink href={SSO_DOCS}>Migrate to SSO</DocsLink>}
+        >
+          They never expire and are a common source of leaks. Prefer IAM Identity Center (SSO).
+        </Callout>
       )}
 
       {profile && (
