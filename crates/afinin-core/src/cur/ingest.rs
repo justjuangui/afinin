@@ -206,7 +206,12 @@ mod tests {
                         let meta = std::fs::metadata(&p).unwrap();
                         let content = std::fs::read(&p).unwrap();
                         out.push(ObjectInfo {
-                            key: p.strip_prefix(base).unwrap().to_string_lossy().into_owned(),
+                            // S3 keys always use `/`, even on Windows.
+                            key: p
+                                .strip_prefix(base)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace('\\', "/"),
                             etag: format!(
                                 "{:x}",
                                 content.len() * 31
