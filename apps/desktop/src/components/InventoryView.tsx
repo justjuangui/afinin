@@ -82,6 +82,9 @@ const COST_STEPS = 5;
 
 const FIT = { padding: 0.12, maxZoom: 1.1 };
 
+/** Tag value select option for "resources without this tag". */
+const UNTAGGED = "\u0000untagged";
+
 const EMPTY_FILTER: GraphFilter = { accounts: [], regions: [], vpcs: [], types: [], tag: null, include_network: false };
 
 interface NodeData extends Record<string, unknown> {
@@ -262,7 +265,15 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
     if (filter.regions.length) details.push({ key: "only regions", meaning: filter.regions.join(", ") });
     if (filter.vpcs.length) details.push({ key: "only VPCs", meaning: filter.vpcs.join(", ") });
     if (filter.types.length) details.push({ key: "only types", meaning: names(facets?.types, filter.types) });
-    if (filter.tag) details.push({ key: "tag filter", meaning: filter.tag.value ? `${filter.tag.key}=${filter.tag.value}` : filter.tag.key });
+    if (filter.tag)
+      details.push({
+        key: "tag filter",
+        meaning: filter.tag.missing
+          ? `resources without a ${filter.tag.key} tag`
+          : filter.tag.value
+            ? `${filter.tag.key}=${filter.tag.value}`
+            : filter.tag.key,
+      });
     if (filter.include_network) details.push({ key: "network resources", meaning: "shown" });
     if (graph && facets) details.push({ key: "resources shown", meaning: `${graph.nodes.length} of ${facets.total}` });
     const node = selected ? graph?.nodes.find((n) => n.id === selected) : undefined;
@@ -412,10 +423,18 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
             {filter.tag && (
               <select
                 aria-label="Tag value"
-                value={filter.tag.value ?? ""}
-                onChange={(e) => set({ tag: { key: filter.tag!.key, value: e.target.value || null } })}
+                value={filter.tag.missing ? UNTAGGED : (filter.tag.value ?? "")}
+                onChange={(e) =>
+                  set({
+                    tag:
+                      e.target.value === UNTAGGED
+                        ? { key: filter.tag!.key, value: null, missing: true }
+                        : { key: filter.tag!.key, value: e.target.value || null },
+                  })
+                }
               >
                 <option value="">Any value</option>
+                <option value={UNTAGGED}>(untagged)</option>
                 {tagValues.map((v) => (
                   <option key={v.key} value={v.key}>
                     {v.label} ({v.count})
@@ -485,7 +504,14 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
           costTagKeys={costTagKeys}
           dataVersion={dataVersion}
           onOpen={(key, value) => {
-            set({ tag: { key, value }, accounts: [], regions: [], vpcs: [], types: [] });
+            // An empty value is the "(untagged)" group: resources without the key.
+            set({
+              tag: value ? { key, value } : { key, value: null, missing: true },
+              accounts: [],
+              regions: [],
+              vpcs: [],
+              types: [],
+            });
             setMode("graph");
           }}
         />
@@ -763,8 +789,9 @@ function ApplicationsPanel({
             return (
               <tr
                 key={a.value}
-                className={a.value && a.resource_count > 0 ? "clickable" : ""}
-                onClick={() => a.value && a.resource_count > 0 && onOpen(key, a.value)}
+                className={a.resource_count > 0 ? "clickable" : ""}
+                onClick={() => a.resource_count > 0 && onOpen(key, a.value)}
+                title={a.resource_count > 0 ? (a.value ? "Show in the graph" : `Show resources without a ${key} tag`) : undefined}
               >
                 <td>{a.value || <span className="muted">(untagged)</span>}</td>
                 <td className="num">{a.resource_count}</td>
