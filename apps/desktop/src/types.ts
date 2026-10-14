@@ -353,6 +353,42 @@ export interface Turn {
   masked_values: number;
   input_tokens: number;
   output_tokens: number;
+  /** How the question was interpreted, from the tool calls. */
+  assumptions: string[];
+  /** Workspace context revision sent with the question (0 = none). */
+  context_revision: number;
+}
+
+export type AssistantProgress = { workspace_id: string } & (
+  | { stage: "thinking"; round: number }
+  | { stage: "tool"; name: string; label: string }
+);
+
+/** A tag (`team`, `env=prod`) or business term and what it means. */
+export interface ContextEntry {
+  key: string;
+  meaning: string;
+}
+
+export interface WorkspaceContext {
+  business: string;
+  /** Linked AWS account ID → what it is used for. */
+  accounts: Record<string, string>;
+  tags: ContextEntry[];
+  glossary: ContextEntry[];
+  instructions: string;
+}
+
+export interface StoredContext {
+  context: WorkspaceContext;
+  revision: number;
+  updated_at: string | null;
+}
+
+export interface ContextRevision {
+  revision: number;
+  created_at: string;
+  context: WorkspaceContext;
 }
 
 export interface LlmLogEntry {

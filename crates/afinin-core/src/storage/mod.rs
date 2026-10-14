@@ -217,6 +217,23 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE accounts ADD COLUMN test_missing TEXT;
     "#,
+    // v8: workspace context for the assistant, with an append-only history.
+    r#"
+    CREATE TABLE workspace_context (
+        workspace_id  TEXT PRIMARY KEY,
+        document      TEXT NOT NULL,   -- JSON WorkspaceContext
+        revision      BIGINT NOT NULL,
+        updated_at    TEXT NOT NULL
+    );
+    CREATE SEQUENCE workspace_context_history_id;
+    CREATE TABLE workspace_context_history (
+        id            BIGINT PRIMARY KEY DEFAULT nextval('workspace_context_history_id'),
+        workspace_id  TEXT NOT NULL,
+        revision      BIGINT NOT NULL,
+        document      TEXT NOT NULL,
+        created_at    TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -236,6 +253,7 @@ const ACCOUNT_DATA: &[(&str, &str)] = &[
     ("aws_anomalies", "source_account"),
 ];
 
+mod context;
 mod cost;
 mod cur;
 mod findings;
@@ -244,6 +262,7 @@ mod llm;
 mod maintenance;
 mod settings;
 
+pub use context::ContextRevision;
 pub use cost::ApiUsage;
 pub use cur::CurStatus;
 pub use findings::PRICE_TTL_DAYS;
@@ -364,6 +383,12 @@ impl Storage {
             )?;
         }
         tx.execute("DELETE FROM accounts WHERE workspace_id = ?", params![id])?;
+        for table in ["workspace_context", "workspace_context_history", "llm_log"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE workspace_id = ?"),
+                params![id],
+            )?;
+        }
         let n = tx.execute("DELETE FROM workspaces WHERE id = ?", params![id])?;
         if n == 0 {
             return Err(Error::NotFound(format!("workspace {id}")));

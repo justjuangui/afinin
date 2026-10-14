@@ -4,6 +4,7 @@
 //! surface minimal (NFR-5).
 
 use afinin_core::cur::template;
+use afinin_core::llm::agent::Progress;
 use afinin_core::{
     Account, Afinin, ApiUsage, AppPaths, AwsFiles, AwsProfile, CostComparisonRow, CostMetric,
     CostOverview, CostQuery, CostSeries, DimensionValue, Error, GroupBy, KeychainStore, Settings,
@@ -14,7 +15,8 @@ use afinin_core::{
     Resource,
 };
 use afinin_core::{
-    CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights, LlmLogEntry, Turn,
+    ContextRevision, CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights,
+    LlmLogEntry, StoredContext, Turn, WorkspaceContext,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +26,8 @@ use tauri_plugin_opener::OpenerExt;
 
 /// Event telling the UI that an account's sync status or data changed.
 const SYNC_EVENT: &str = "sync-changed";
+/// Payload: `{ workspace_id, stage, … }` while the assistant works on a turn.
+const ASSISTANT_PROGRESS_EVENT: &str = "assistant-progress";
 /// How often the background scheduler looks for accounts due for sync.
 const SCHEDULER_TICK: Duration = Duration::from_secs(10 * 60);
 
@@ -431,15 +435,48 @@ fn insights(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Insig
 
 #[tauri::command]
 async fn ask(
+    app: AppHandle,
     state: State<'_, AppState>,
     workspace_id: String,
     conversation_id: Option<String>,
     question: String,
 ) -> CmdResult<Turn> {
+    let progress = |p: Progress| {
+        let mut payload = serde_json::to_value(&p).unwrap_or_default();
+        payload["workspace_id"] = workspace_id.clone().into();
+        let _ = app.emit(ASSISTANT_PROGRESS_EVENT, payload);
+    };
     state
         .core()?
-        .ask(&workspace_id, conversation_id.as_deref(), &question)
+        .ask(
+            &workspace_id,
+            conversation_id.as_deref(),
+            &question,
+            &progress,
+        )
         .await
+}
+
+#[tauri::command]
+fn workspace_context(state: State<'_, AppState>, workspace_id: String) -> CmdResult<StoredContext> {
+    state.core()?.workspace_context(&workspace_id)
+}
+
+#[tauri::command]
+fn save_workspace_context(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    context: WorkspaceContext,
+) -> CmdResult<StoredContext> {
+    state.core()?.save_workspace_context(&workspace_id, context)
+}
+
+#[tauri::command]
+fn workspace_context_history(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<Vec<ContextRevision>> {
+    state.core()?.workspace_context_history(&workspace_id)
 }
 
 /// Stores (or with `None`, removes) the provider API key in the OS keychain.
@@ -634,6 +671,9 @@ pub fn run() {
             has_llm_api_key,
             llm_log,
             clear_llm_log,
+            workspace_context,
+            save_workspace_context,
+            workspace_context_history,
             export_backup,
             import_backup,
             check_update,
