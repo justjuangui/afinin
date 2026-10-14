@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/afinin-core"]
-default-members = ["crates/afinin-core"]
+members = ["crates/afinin-core", "apps/desktop/src-tauri"]
+default-members = ["crates/afinin-core", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
