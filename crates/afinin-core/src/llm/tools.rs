@@ -378,7 +378,12 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 "arn": node.id, "type": node.resource_type.id(), "name": node.label, "account_id": node.account_id,
                 "region": node.region, "vpc_id": node.vpc_id, "attributes": node.attrs, "tags": node.tags,
                 "monthly_cost_30d": node.cost.map(round),
-                "cost_basis": if graph.cost_basis == crate::inventory::graph::CostBasis::Resource { "this resource (CUR)" } else { "its whole service in this account (Cost Explorer)" },
+                "cost_basis": match node.cost_basis {
+                    Some(crate::inventory::graph::CostBasis::Resource) => "this resource (CUR)",
+                    Some(crate::inventory::graph::CostBasis::ListPrice) => "this resource's monthly list price (not actual spend)",
+                    Some(crate::inventory::graph::CostBasis::Service) => "its whole service in this account (Cost Explorer)",
+                    None => "unknown without CUR",
+                },
                 "connections": connections,
             }))
         }

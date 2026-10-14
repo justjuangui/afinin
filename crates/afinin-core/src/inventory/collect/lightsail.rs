@@ -53,10 +53,48 @@ pub async fn regions(config: &aws_config::SdkConfig) -> Result<Vec<String>> {
         .collect())
 }
 
+/// Monthly list price (USD) per bundle ID, for instances and databases.
+/// Without CUR this is the best per-resource figure: the alternative is the
+/// whole Lightsail bill repeated on every resource.
+async fn bundle_prices(client: &Client) -> Result<HashMap<String, f64>> {
+    let mut prices = HashMap::new();
+    for b in pages!(client.get_bundles().include_inactive(true), bundles) {
+        if let (Some(id), Some(p)) = (b.bundle_id(), b.price()) {
+            prices.insert(id.to_owned(), f64::from(p));
+        }
+    }
+    for b in pages!(
+        client
+            .get_relational_database_bundles()
+            .include_inactive(true),
+        bundles
+    ) {
+        if let (Some(id), Some(p)) = (b.bundle_id(), b.price()) {
+            prices.insert(id.to_owned(), f64::from(p));
+        }
+    }
+    Ok(prices)
+}
+
+/// A price as a JSON number, rounded to cents (f32 prices carry noise).
+fn price(p: f64) -> Option<Value> {
+    serde_json::Number::from_f64((p * 100.0).round() / 100.0).map(Value::Number)
+}
+
 pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
     let client = Client::new(ctx.config);
     let (acct, region) = (ctx.account, ctx.region);
     let mut out = Collected::default();
+    // Prices are a nicety: a denied GetBundles must not hide the resources.
+    let prices = match bundle_prices(&client).await {
+        Ok(p) => p,
+        Err(e) => {
+            out.warnings
+                .push(format!("lightsail prices in {region}: {e}"));
+            HashMap::new()
+        }
+    };
+    let bundle_price = |id: Option<&str>| id.and_then(|id| prices.get(id)).copied().and_then(price);
 
     // Lightsail links resources by name; relations need ARNs.
     let instances = pages!(client.get_instances(), instances);
@@ -74,6 +112,7 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
         r.with_tags(tags(i.tags()))
             .attr("state", s(i.state().and_then(|st| st.name())))
             .attr("bundle_id", s(i.bundle_id()))
+            .attr("monthly_price_usd", bundle_price(i.bundle_id()))
             .attr("blueprint", s(i.blueprint_name().or(i.blueprint_id())))
             .attr(
                 "cpu_count",
@@ -108,6 +147,10 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
             .attr("engine", s(db.engine()))
             .attr("engine_version", s(db.engine_version()))
             .attr("bundle_id", s(db.relational_database_bundle_id()))
+            .attr(
+                "monthly_price_usd",
+                bundle_price(db.relational_database_bundle_id()),
+            )
             .attr("dns_name", s(endpoint.and_then(|e| e.address())))
             .attr("port", endpoint.and_then(|e| e.port()).and_then(num))
             .attr(
@@ -168,6 +211,10 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
         r.attr("public_ip", s(ip.ip_address()))
             .attr("attached_to", s(ip.attached_to()))
             .attr("create_time", time(ip.created_at()));
+        // Lightsail doesn't charge for a static IP attached to an instance.
+        if ip.is_attached() == Some(true) {
+            r.attr("monthly_price_usd", price(0.0));
+        }
         if let Some(inst) = ip.attached_to().and_then(|n| by_name.get(n)) {
             out.relate(inst, me, K::Attached);
         }

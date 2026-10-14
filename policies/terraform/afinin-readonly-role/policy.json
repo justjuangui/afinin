@@ -71,6 +71,8 @@
         "lightsail:GetLoadBalancers",
         "lightsail:GetDisks",
         "lightsail:GetStaticIps",
+        "lightsail:GetBundles",
+        "lightsail:GetRelationalDatabaseBundles",
         "tag:GetResources"
       ],
       "Resource": "*"
