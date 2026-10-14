@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::Storage;
 use crate::error::{Error, Result};
 use crate::llm::agent::Turn;
+use crate::llm::context::ScreenContext;
 use crate::model::now_rfc3339;
 
 /// Longest title kept, taken from the first question.
@@ -52,10 +53,18 @@ impl Rating {
 pub struct StoredTurn {
     pub id: i64,
     pub question: String,
+    /// What the user was looking at when asking, replayed by re-checks.
+    pub screen: Option<ScreenContext>,
     pub turn: Turn,
     pub rating: Option<Rating>,
     pub rating_note: Option<String>,
+    /// Kept as a reference answer to re-check against current data.
+    pub reference: bool,
     pub created_at: String,
+}
+
+fn to_json<T: Serialize>(v: &T) -> Result<String> {
+    serde_json::to_string(v).map_err(|e| Error::Other(format!("cannot store assistant turn: {e}")))
 }
 
 fn title(question: &str) -> String {
@@ -73,12 +82,13 @@ impl Storage {
         &self,
         workspace_id: &str,
         question: &str,
+        screen: Option<&ScreenContext>,
         turn: &Turn,
         latency_ms: u64,
     ) -> Result<i64> {
         let now = now_rfc3339();
-        let document = serde_json::to_string(turn)
-            .map_err(|e| Error::Other(format!("cannot store assistant turn: {e}")))?;
+        let document = to_json(turn)?;
+        let screen = screen.map(to_json).transpose()?;
         let tx = self.conn.unchecked_transaction()?;
         let updated = tx.execute(
             "UPDATE assistant_conversations SET updated_at = ? WHERE id = ?",
@@ -92,12 +102,13 @@ impl Storage {
             )?;
         }
         let id: i64 = tx.query_row(
-            "INSERT INTO assistant_turns (conversation_id, workspace_id, question, turn, latency_ms, created_at)
-             VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+            "INSERT INTO assistant_turns (conversation_id, workspace_id, question, screen, turn, latency_ms, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
             params![
                 turn.conversation_id,
                 workspace_id,
                 question,
+                screen,
                 document,
                 latency_ms as i64,
                 now
@@ -132,36 +143,71 @@ impl Storage {
         Ok(rows.collect::<duckdb::Result<_>>()?)
     }
 
-    /// The saved turns of a conversation, oldest first.
-    pub fn assistant_turns(&self, conversation_id: &str) -> Result<Vec<StoredTurn>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, question, turn, rating, rating_note, created_at
-             FROM assistant_turns WHERE conversation_id = ? ORDER BY id",
-        )?;
-        let rows = stmt.query_map(params![conversation_id], |r| {
+    /// Saved turns matching `filter` (a SQL condition with one `?` for `arg`).
+    fn query_turns(&self, filter: &str, arg: &dyn duckdb::ToSql) -> Result<Vec<StoredTurn>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, question, screen, turn, rating, rating_note, is_reference, created_at
+             FROM assistant_turns WHERE {filter} ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([arg], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
                 r.get::<_, Option<String>>(4)?,
-                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<bool>>(6)?,
+                r.get::<_, String>(7)?,
             ))
         })?;
         rows.map(|row| {
-            let (id, question, doc, rating, rating_note, created_at) = row?;
+            let (id, question, screen, doc, rating, rating_note, is_reference, created_at) = row?;
+            let invalid = |e: serde_json::Error| {
+                Error::Other(format!("stored assistant turn {id} is invalid: {e}"))
+            };
             Ok(StoredTurn {
                 id,
                 question,
-                turn: serde_json::from_str(&doc).map_err(|e| {
-                    Error::Other(format!("stored assistant turn {id} is invalid: {e}"))
-                })?,
+                screen: screen
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(invalid)?,
+                turn: serde_json::from_str(&doc).map_err(invalid)?,
                 rating: rating.as_deref().and_then(Rating::parse),
                 rating_note,
+                reference: is_reference.unwrap_or(false),
                 created_at,
             })
         })
         .collect()
+    }
+
+    /// The saved turns of a conversation, oldest first.
+    pub fn assistant_turns(&self, conversation_id: &str) -> Result<Vec<StoredTurn>> {
+        self.query_turns("conversation_id = ?", &conversation_id)
+    }
+
+    pub fn assistant_turn(&self, turn_id: i64) -> Result<StoredTurn> {
+        self.query_turns("id = ?", &turn_id)?
+            .pop()
+            .ok_or_else(|| Error::NotFound(format!("assistant turn {turn_id}")))
+    }
+
+    /// Answers kept as references for re-checks, oldest first.
+    pub fn reference_turns(&self, workspace_id: &str) -> Result<Vec<StoredTurn>> {
+        self.query_turns("is_reference AND workspace_id = ?", &workspace_id)
+    }
+
+    pub fn set_reference_turn(&self, turn_id: i64, reference: bool) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE assistant_turns SET is_reference = ? WHERE id = ?",
+            params![reference, turn_id],
+        )?;
+        if n == 0 {
+            return Err(Error::NotFound(format!("assistant turn {turn_id}")));
+        }
+        Ok(())
     }
 
     /// Which workspace a conversation belongs to, if it was saved.
@@ -250,12 +296,21 @@ mod tests {
             "our very large production".repeat(5)
         );
         let first = db
-            .save_assistant_turn(&ws.id, &long, &turn("c1", "Because EC2."), 1200)
+            .save_assistant_turn(&ws.id, &long, None, &turn("c1", "Because EC2."), 1200)
             .unwrap();
-        db.save_assistant_turn(&ws.id, "And in August?", &turn("c1", "Less."), 800)
+        db.save_assistant_turn(&ws.id, "And in August?", None, &turn("c1", "Less."), 800)
             .unwrap();
-        db.save_assistant_turn(&ws.id, "Top findings?", &turn("c2", "Two."), 500)
-            .unwrap();
+        db.save_assistant_turn(
+            &ws.id,
+            "Top findings?",
+            Some(&ScreenContext {
+                view: "Findings".into(),
+                details: Vec::new(),
+            }),
+            &turn("c2", "Two."),
+            500,
+        )
+        .unwrap();
 
         let list = db.assistant_conversations(&ws.id, 10).unwrap();
         assert_eq!(list.len(), 2);
@@ -283,6 +338,19 @@ mod tests {
         db.rate_assistant_turn(first, None, Some("ignored"))
             .unwrap();
         assert_eq!(db.assistant_turns("c1").unwrap()[0].rating_note, None);
+
+        // References: marked turns, with the screen they were asked from.
+        let c2 = db.assistant_turns("c2").unwrap()[0].id;
+        assert!(db.reference_turns(&ws.id).unwrap().is_empty());
+        db.set_reference_turn(c2, true).unwrap();
+        let refs = db.reference_turns(&ws.id).unwrap();
+        assert_eq!(refs.len(), 1);
+        assert!(refs[0].reference);
+        assert_eq!(
+            refs[0].screen.as_ref().map(|s| s.view.as_str()),
+            Some("Findings")
+        );
+        assert_eq!(db.assistant_turn(c2).unwrap().question, "Top findings?");
 
         db.delete_assistant_conversation("c1").unwrap();
         assert!(db.assistant_turns("c1").unwrap().is_empty());

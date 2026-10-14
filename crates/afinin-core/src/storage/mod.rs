@@ -257,6 +257,11 @@ const MIGRATIONS: &[&str] = &[
         created_at       TEXT NOT NULL
     );
     "#,
+    // v10: reference answers for re-checks, and the screen each question was asked from.
+    r#"
+    ALTER TABLE assistant_turns ADD COLUMN is_reference BOOLEAN DEFAULT false;
+    ALTER TABLE assistant_turns ADD COLUMN screen TEXT;
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.

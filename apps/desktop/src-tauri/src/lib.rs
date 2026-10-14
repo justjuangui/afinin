@@ -5,6 +5,7 @@
 
 use afinin_core::cur::template;
 use afinin_core::llm::agent::Progress;
+use afinin_core::llm::recheck::Recheck;
 use afinin_core::{
     Account, Afinin, ApiUsage, AppPaths, AwsFiles, AwsProfile, CostComparisonRow, CostMetric,
     CostOverview, CostQuery, CostSeries, DimensionValue, Error, GroupBy, KeychainStore, Settings,
@@ -461,6 +462,35 @@ async fn ask(
 }
 
 #[tauri::command]
+async fn recheck_reference(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: String,
+    turn_id: i64,
+) -> CmdResult<Recheck> {
+    let progress = |p: Progress| {
+        let mut payload = serde_json::to_value(&p).unwrap_or_default();
+        payload["workspace_id"] = workspace_id.clone().into();
+        payload["recheck_turn_id"] = turn_id.into();
+        let _ = app.emit(ASSISTANT_PROGRESS_EVENT, payload);
+    };
+    state
+        .core()?
+        .recheck_reference(&workspace_id, turn_id, &progress)
+        .await
+}
+
+#[tauri::command]
+fn reference_turns(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<StoredTurn>> {
+    state.core()?.reference_turns(&workspace_id)
+}
+
+#[tauri::command]
+fn set_reference_turn(state: State<'_, AppState>, turn_id: i64, reference: bool) -> CmdResult<()> {
+    state.core()?.set_reference_turn(turn_id, reference)
+}
+
+#[tauri::command]
 fn assistant_conversations(
     state: State<'_, AppState>,
     workspace_id: String,
@@ -714,6 +744,9 @@ pub fn run() {
             clear_llm_log,
             assistant_conversations,
             assistant_turns,
+            recheck_reference,
+            reference_turns,
+            set_reference_turn,
             rate_assistant_turn,
             delete_assistant_conversation,
             workspace_context,

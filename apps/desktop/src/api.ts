@@ -32,6 +32,7 @@ import type {
   InventoryScan,
   LlmLogEntry,
   Rating,
+  Recheck,
   ScreenContext,
   Settings,
   SsoLoginPrompt,
@@ -115,6 +116,10 @@ export const api = {
   assistantTurns: (conversationId: string) => invoke<StoredTurn[]>("assistant_turns", { conversationId }),
   rateAssistantTurn: (turnId: number, rating: Rating | null, note: string | null) =>
     invoke<void>("rate_assistant_turn", { turnId, rating, note }),
+  referenceTurns: (workspaceId: string) => invoke<StoredTurn[]>("reference_turns", { workspaceId }),
+  setReferenceTurn: (turnId: number, reference: boolean) => invoke<void>("set_reference_turn", { turnId, reference }),
+  recheckReference: (workspaceId: string, turnId: number) =>
+    invoke<Recheck>("recheck_reference", { workspaceId, turnId }),
   deleteAssistantConversation: (conversationId: string) =>
     invoke<void>("delete_assistant_conversation", { conversationId }),
   workspaceContext: (workspaceId: string) => invoke<StoredContext>("workspace_context", { workspaceId }),
