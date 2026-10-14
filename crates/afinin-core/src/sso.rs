@@ -58,6 +58,7 @@ fn oidc_client(region: &str) -> Client {
 pub async fn start(sso: &SsoSettings) -> Result<(PendingLogin, SsoLoginPrompt)> {
     let client = oidc_client(&sso.region);
     let reg = client
+        // readonly-allow: registers an OAuth client for login; no AWS resource changes.
         .register_client()
         .client_name("afinin")
         .client_type("public")
@@ -74,6 +75,7 @@ pub async fn start(sso: &SsoSettings) -> Result<(PendingLogin, SsoLoginPrompt)> 
         .to_owned();
 
     let auth = client
+        // readonly-allow: OAuth device authorization for login.
         .start_device_authorization()
         .client_id(&client_id)
         .client_secret(&client_secret)
@@ -115,6 +117,7 @@ pub async fn poll(pending: &PendingLogin, secrets: &dyn SecretStore) -> Result<S
         return Ok(SsoLoginStatus::Expired);
     }
     let result = oidc_client(&pending.sso.region)
+        // readonly-allow: OAuth token exchange for login.
         .create_token()
         .client_id(&pending.client_id)
         .client_secret(&pending.client_secret)

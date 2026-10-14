@@ -15,18 +15,28 @@ Status: **early development (M0 — skeleton)**. See [`requirement.md`](requirem
 | `crates/afinin-core` | Rust core library (auth, storage, collectors, analysis). Independent of Tauri. |
 | `apps/desktop` | Tauri desktop app: React + TypeScript UI (`src/`) and Rust shell (`src-tauri/`). |
 | `policies/` | Read-only IAM policies for the accounts Afinín connects to. |
+| `scripts/` | Policy checks run in CI: no AWS write calls (NFR-1), SPDX headers (NFR-7). |
 
 ## Development
 
 Prerequisites: Rust (stable), Node.js 20+, and the
 [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/)
-(on Linux: `webkit2gtk-4.1`, `libsoup-3.0`, `libsecret`).
+(on Arch: `sudo pacman -S webkit2gtk-4.1 libsoup3 libsecret`; on Debian/Ubuntu:
+`libwebkit2gtk-4.1-dev librsvg2-dev libsecret-1-dev`). On Linux a Secret Service
+provider (GNOME Keyring or KWallet) must be running: Afinín keeps its database key there.
 
 ```sh
 cargo test -p afinin-core          # core library tests
 cd apps/desktop
 npm install
 npm run tauri dev                  # run the desktop app
+```
+
+Policy checks:
+
+```sh
+./scripts/check-readonly.sh        # fails on write-like AWS SDK calls
+./scripts/check-spdx.sh            # every source file has the SPDX header
 ```
 
 ## License
