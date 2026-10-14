@@ -18,3 +18,8 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
+
+# Dependencies (the AWS SDK crates especially) are huge; skipping their debug
+# info speeds up builds and linking. Workspace crates keep full debug info.
+[profile.dev.package."*"]
+debug = false
