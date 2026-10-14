@@ -1,11 +1,31 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Tiered left-to-right layout: one band per tier (edge → load balancers →
-// target groups → compute → storage → data → messaging → network). O(n log n),
+// target groups → compute → attached IPs → storage → data → messaging →
+// network). O(n log n),
 // so thousands of nodes lay out instantly (NFR-12).
 
 import type { GraphEdge, GraphNode, Tier } from "./types";
 
 export const TIER_ORDER: Tier[] = ["edge", "balancing", "routing", "compute", "storage", "data", "messaging", "network"];
+
+/** Bands left to right: tiers, plus "attached" right after compute. */
+type Band = Tier | "attached";
+const BAND_ORDER: Band[] = ["edge", "balancing", "routing", "compute", "attached", "storage", "data", "messaging", "network"];
+
+/**
+ * Network resources attached only to compute (Elastic IPs, Lightsail static
+ * IPs) go in a band right after compute: in the network band, the line to
+ * their instance crossed the storage and data bands and ran behind
+ * unrelated nodes there.
+ */
+function band(n: GraphNode, edges: GraphEdge[], tierOf: Map<string, Tier>): Band {
+  if (n.tier !== "network") return n.tier;
+  const own = edges.filter((e) => e.source === n.id || e.target === n.id);
+  const attachedToCompute =
+    own.length > 0 &&
+    own.every((e) => e.kind === "attached" && tierOf.get(e.source === n.id ? e.target : e.source) === "compute");
+  return attachedToCompute ? "attached" : n.tier;
+}
 
 export const NODE_W = 200;
 export const NODE_H = 52;
@@ -34,9 +54,11 @@ export function layout(nodes: GraphNode[], edges: GraphEdge[]): Map<string, Posi
   const positions = new Map<string, Position>();
   let x = 0;
 
-  for (const tier of TIER_ORDER) {
-    const band = nodes.filter((n) => n.tier === tier);
-    if (band.length === 0) continue;
+  const tierOf = new Map(nodes.map((n) => [n.id, n.tier]));
+  const bandOf = new Map(nodes.map((n) => [n.id, band(n, edges, tierOf)]));
+  for (const b of BAND_ORDER) {
+    const members = nodes.filter((n) => bandOf.get(n.id) === b);
+    if (members.length === 0) continue;
     // Place each node near what it connects to in earlier bands (barycenter),
     // falling back to grouping by account, region and VPC.
     const bary = (n: GraphNode) => {
@@ -44,7 +66,7 @@ export function layout(nodes: GraphNode[], edges: GraphEdge[]): Map<string, Posi
       return ranks.length ? ranks.reduce((a, b) => a + b, 0) / ranks.length : Number.POSITIVE_INFINITY;
     };
     const group = (n: GraphNode) => `${n.account_id}|${n.region}|${n.vpc_id ?? ""}|${n.resource_type}|${n.label}`;
-    const sorted = band
+    const sorted = members
       .map((n) => ({ n, b: bary(n), g: group(n) }))
       .sort((a, b) => a.b - b.b || a.g.localeCompare(b.g));
     sorted.forEach(({ n }, i) => {
