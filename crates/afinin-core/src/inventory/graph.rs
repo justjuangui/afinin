@@ -13,6 +13,10 @@ pub struct TagFilter {
     pub key: String,
     /// `None` matches any value of the key.
     pub value: Option<String>,
+    /// Match resources *without* the key (or with an empty value), the
+    /// "(untagged)" group of Applications. `value` is ignored.
+    #[serde(default)]
+    pub missing: bool,
 }
 
 /// Graph filters (FR-23). Empty lists mean "all".
@@ -45,6 +49,7 @@ impl GraphFilter {
                 .tag
                 .as_ref()
                 .is_none_or(|t| match (r.tags.get(&t.key), &t.value) {
+                    (v, _) if t.missing => v.is_none_or(|v| v.is_empty()),
                     (Some(_), None) => true,
                     (Some(v), Some(want)) => v == want,
                     (None, _) => false,
@@ -519,6 +524,7 @@ mod tests {
             tag: Some(TagFilter {
                 key: "app".into(),
                 value: Some("shop".into()),
+                missing: false,
             }),
             ..Default::default()
         };
@@ -541,6 +547,31 @@ mod tests {
             &CostOverlay::default(),
         );
         assert!(vpc.nodes.iter().any(|n| n.native_id == "E1" && n.context));
+    }
+
+    #[test]
+    fn untagged_filter_shows_the_untagged_application() {
+        let (resources, relations) = fixture();
+        let untagged = applications(&resources, "app")
+            .into_iter()
+            .find(|a| a.value.is_empty())
+            .unwrap();
+        let filter = GraphFilter {
+            tag: Some(TagFilter {
+                key: "app".into(),
+                value: None,
+                missing: true,
+            }),
+            ..Default::default()
+        };
+        let g = build(&resources, &relations, &filter, &CostOverlay::default());
+        let matched: Vec<&GraphNode> = g.nodes.iter().filter(|n| !n.context).collect();
+        assert_eq!(matched.len(), untagged.resource_count);
+        assert!(
+            matched
+                .iter()
+                .all(|n| n.tags.get("app").is_none_or(|v| v.is_empty()))
+        );
     }
 
     #[test]

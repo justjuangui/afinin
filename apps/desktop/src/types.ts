@@ -224,7 +224,8 @@ export interface GraphFilter {
   regions: string[];
   vpcs: string[];
   types: string[];
-  tag: { key: string; value: string | null } | null;
+  /** `missing`: resources without the key (or with an empty value). */
+  tag: { key: string; value: string | null; missing?: boolean } | null;
   include_network: boolean;
 }
 
