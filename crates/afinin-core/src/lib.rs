@@ -1037,6 +1037,68 @@ impl Afinin {
         screen: Option<&llm::context::ScreenContext>,
         on_progress: &(dyn Fn(llm::agent::Progress) + Send + Sync),
     ) -> Result<Turn> {
+        self.answer(
+            workspace_id,
+            conversation_id,
+            question,
+            screen,
+            on_progress,
+            true,
+        )
+        .await
+    }
+
+    /// Re-asks a reference answer's question in a fresh conversation, with the
+    /// screen it was asked from, and compares the result. The new answer is
+    /// not saved to History (its requests are in the request log).
+    pub async fn recheck_reference(
+        &self,
+        workspace_id: &str,
+        turn_id: i64,
+        on_progress: &(dyn Fn(llm::agent::Progress) + Send + Sync),
+    ) -> Result<llm::recheck::Recheck> {
+        let saved = self.db().assistant_turn(turn_id)?;
+        let after = self
+            .answer(
+                workspace_id,
+                None,
+                &saved.question,
+                saved.screen.as_ref(),
+                on_progress,
+                false,
+            )
+            .await?;
+        let (queries_removed, queries_added) =
+            llm::recheck::compare_queries(&saved.turn.citations, &after.citations);
+        Ok(llm::recheck::Recheck {
+            turn_id,
+            question: saved.question,
+            before: saved.turn,
+            after,
+            queries_removed,
+            queries_added,
+        })
+    }
+
+    pub fn reference_turns(&self, workspace_id: &str) -> Result<Vec<StoredTurn>> {
+        self.db().reference_turns(workspace_id)
+    }
+
+    pub fn set_reference_turn(&self, turn_id: i64, reference: bool) -> Result<()> {
+        self.db().set_reference_turn(turn_id, reference)
+    }
+
+    /// One answered question. `save` keeps it in History and in memory for
+    /// follow-ups; re-checks pass false.
+    async fn answer(
+        &self,
+        workspace_id: &str,
+        conversation_id: Option<&str>,
+        question: &str,
+        screen: Option<&llm::context::ScreenContext>,
+        on_progress: &(dyn Fn(llm::agent::Progress) + Send + Sync),
+        save: bool,
+    ) -> Result<Turn> {
         let cfg = self.settings()?.llm;
         let provider = self.llm_provider(&cfg).await?;
         let existing = conversation_id.and_then(|id| {
@@ -1074,7 +1136,7 @@ impl Afinin {
         // applications and people: mask it like everything else sent.
         let (plain_context, context_revision) = self.rendered_context(workspace_id)?;
         let context = conv.redactor.mask(&plain_context);
-        let screen = conv
+        let screen_text = conv
             .redactor
             .mask(&screen.map(|s| s.render()).unwrap_or_default());
         let system = llm::agent::system_prompt(&llm::agent::PromptContext {
@@ -1083,7 +1145,7 @@ impl Afinin {
             default_metric: &default_metric,
             workspace: &context,
             workspace_revision: context_revision,
-            screen: &screen,
+            screen: &screen_text,
         });
         let conv_id = conv.id.clone();
         let provider_name = format!("{:?}", cfg.provider);
@@ -1122,21 +1184,26 @@ impl Afinin {
                 llm::grounding::unverified(&turn.answer, &results, &[question, &plain_context]);
             turn.data_as_of = self.data_as_of(workspace_id);
             // A failed save must not lose the answer; it just can't be rated.
-            turn.turn_id = self
-                .db()
-                .save_assistant_turn(
-                    workspace_id,
-                    question,
-                    &turn,
-                    started.elapsed().as_millis() as u64,
-                )
-                .ok();
+            if save {
+                turn.turn_id = self
+                    .db()
+                    .save_assistant_turn(
+                        workspace_id,
+                        question,
+                        screen,
+                        &turn,
+                        started.elapsed().as_millis() as u64,
+                    )
+                    .ok();
+            }
             turn
         });
-        self.conversations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(conv.id.clone(), conv);
+        if save {
+            self.conversations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(conv.id.clone(), conv);
+        }
         result
     }
 

@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { Callout } from "./Callout";
 import { ConfirmDialog, Modal } from "./Modal";
+import { ReferenceChecks } from "./ReferenceChecks";
 
 interface Entry {
   role: "user" | "assistant";
@@ -23,6 +24,7 @@ interface Entry {
   turn?: Turn;
   rating?: Rating | null;
   ratingNote?: string | null;
+  reference?: boolean;
 }
 
 interface Props {
@@ -141,7 +143,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
       () => undefined,
     );
     const unlisten = api.onAssistantProgress((p) => {
-      if (p.workspace_id !== workspaceId) return;
+      if (p.workspace_id !== workspaceId || p.recheck_turn_id != null) return;
       const label = progressLabel(p);
       setSteps((s) => (s[s.length - 1] === label ? s : [...s, label]));
     });
@@ -287,8 +289,12 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
                     turnId={e.turn.turn_id}
                     rating={e.rating ?? null}
                     note={e.ratingNote ?? null}
+                    reference={e.reference ?? false}
                     onRated={(rating, ratingNote) =>
                       setEntries((list) => list.map((x) => (x === e ? { ...x, rating, ratingNote } : x)))
+                    }
+                    onReference={(reference) =>
+                      setEntries((list) => list.map((x) => (x === e ? { ...x, reference } : x)))
                     }
                   />
                 )}
@@ -400,6 +406,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
                       turn: { ...t.turn, turn_id: t.id },
                       rating: t.rating,
                       ratingNote: t.rating_note,
+                      reference: t.reference,
                     },
                   ]),
                 );
@@ -490,12 +497,16 @@ function AnswerFeedback({
   turnId,
   rating,
   note,
+  reference,
   onRated,
+  onReference,
 }: {
   turnId: number;
   rating: Rating | null;
   note: string | null;
+  reference: boolean;
   onRated: (rating: Rating | null, note: string | null) => void;
+  onReference: (reference: boolean) => void;
 }) {
   const [draft, setDraft] = useState(note ?? "");
   const [editing, setEditing] = useState(false);
@@ -535,6 +546,19 @@ function AnswerFeedback({
           }}
         >
           Not right
+        </button>
+        <button
+          className={`ghost small${reference ? " active" : ""}`}
+          aria-pressed={reference}
+          title="Re-check this answer later against current data (History → Reference answers)"
+          onClick={() =>
+            api.setReferenceTurn(turnId, !reference).then(
+              () => onReference(!reference),
+              (e) => setError(errorMessage(e)),
+            )
+          }
+        >
+          {reference ? "Reference ✓" : "Use as reference"}
         </button>
         {rating === "down" && note && !editing && <span className="muted small">“{note}”</span>}
       </div>
@@ -608,6 +632,8 @@ function HistoryDialog({
           {error}
         </Callout>
       )}
+      <ReferenceChecks workspaceId={workspaceId} />
+      <h3>Conversations</h3>
       <p className="muted small">Saved in Afinín&apos;s encrypted local database, per workspace.</p>
       {list?.length === 0 && <p className="muted">No conversations yet.</p>}
       {list && list.length > 0 && (

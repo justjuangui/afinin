@@ -378,13 +378,26 @@ export interface ConversationSummary {
 export interface StoredTurn {
   id: number;
   question: string;
+  screen: ScreenContext | null;
   turn: Turn;
   rating: Rating | null;
   rating_note: string | null;
+  /** Kept as a reference answer to re-check. */
+  reference: boolean;
   created_at: string;
 }
 
-export type AssistantProgress = { workspace_id: string } & (
+export interface Recheck {
+  turn_id: number;
+  question: string;
+  before: Turn;
+  after: Turn;
+  queries_removed: string[];
+  queries_added: string[];
+}
+
+/** `recheck_turn_id` is set while a reference answer is being re-checked. */
+export type AssistantProgress = { workspace_id: string; recheck_turn_id?: number } & (
   | { stage: "thinking"; round: number }
   | { stage: "tool"; name: string; label: string }
 );
