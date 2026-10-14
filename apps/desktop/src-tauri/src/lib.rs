@@ -36,12 +36,29 @@ const SCHEDULER_TICK: Duration = Duration::from_secs(10 * 60);
 type CmdResult<T> = Result<T, Error>;
 
 /// The core may fail to open (e.g. no keychain available); the UI shows why.
-struct AppState(Result<Afinin, String>);
+struct AppState(Result<Arc<Afinin>, String>);
 
 impl AppState {
     fn core(&self) -> CmdResult<&Afinin> {
-        self.0.as_ref().map_err(|e| Error::Other(e.clone()))
+        self.0.as_deref().map_err(|e| Error::Other(e.clone()))
     }
+}
+
+/// Runs a command's work on a blocking thread. Synchronous commands run on
+/// the main thread, where any slow (or stuck) database or file access
+/// freezes the window ("Not responding").
+async fn blocking<T: Send + 'static>(
+    state: &State<'_, AppState>,
+    work: impl FnOnce(&Afinin) -> CmdResult<T> + Send + 'static,
+) -> CmdResult<T> {
+    let core = state
+        .0
+        .as_ref()
+        .map_err(|e| Error::Other(e.clone()))?
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || work(&core))
+        .await
+        .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
 fn open_core() -> Result<Afinin, String> {
@@ -60,48 +77,52 @@ fn list_profiles(state: State<'_, AppState>) -> CmdResult<Vec<AwsProfile>> {
 }
 
 #[tauri::command]
-fn list_workspaces(state: State<'_, AppState>) -> CmdResult<Vec<Workspace>> {
-    state.core()?.list_workspaces()
+async fn list_workspaces(state: State<'_, AppState>) -> CmdResult<Vec<Workspace>> {
+    blocking(&state, move |core| core.list_workspaces()).await
 }
 
 #[tauri::command]
-fn create_workspace(state: State<'_, AppState>, name: String) -> CmdResult<Workspace> {
-    state.core()?.create_workspace(&name)
+async fn create_workspace(state: State<'_, AppState>, name: String) -> CmdResult<Workspace> {
+    blocking(&state, move |core| core.create_workspace(&name)).await
 }
 
 #[tauri::command]
-fn rename_workspace(state: State<'_, AppState>, id: String, name: String) -> CmdResult<()> {
-    state.core()?.rename_workspace(&id, &name)
+async fn rename_workspace(state: State<'_, AppState>, id: String, name: String) -> CmdResult<()> {
+    blocking(&state, move |core| core.rename_workspace(&id, &name)).await
 }
 
 #[tauri::command]
-fn delete_workspace(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    state.core()?.delete_workspace(&id)
+async fn delete_workspace(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    blocking(&state, move |core| core.delete_workspace(&id)).await
 }
 
 #[tauri::command]
-fn list_accounts(
+async fn list_accounts(
     state: State<'_, AppState>,
     workspace_id: Option<String>,
 ) -> CmdResult<Vec<Account>> {
-    state.core()?.list_accounts(workspace_id.as_deref())
+    blocking(&state, move |core| {
+        core.list_accounts(workspace_id.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-fn add_account(
+async fn add_account(
     state: State<'_, AppState>,
     workspace_id: String,
     profile: String,
     name: Option<String>,
 ) -> CmdResult<Account> {
-    state
-        .core()?
-        .add_account(&workspace_id, &profile, name.as_deref())
+    blocking(&state, move |core| {
+        core.add_account(&workspace_id, &profile, name.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-fn remove_account(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    state.core()?.remove_account(&id)
+async fn remove_account(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    blocking(&state, move |core| core.remove_account(&id)).await
 }
 
 #[tauri::command]
@@ -148,20 +169,20 @@ fn open_docs(app: tauri::AppHandle, url: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn sso_logout(state: State<'_, AppState>, profile: String) -> CmdResult<()> {
-    state.core()?.sso_logout(&profile)
+async fn sso_logout(state: State<'_, AppState>, profile: String) -> CmdResult<()> {
+    blocking(&state, move |core| core.sso_logout(&profile)).await
 }
 
 // ---- settings ------------------------------------------------------------
 
 #[tauri::command]
-fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
-    state.core()?.settings()
+async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
+    blocking(&state, move |core| core.settings()).await
 }
 
 #[tauri::command]
-fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
-    state.core()?.save_settings(&settings)
+async fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+    blocking(&state, move |core| core.save_settings(&settings)).await
 }
 
 // ---- sync ----------------------------------------------------------------
@@ -222,51 +243,58 @@ fn spawn_scheduler(app: AppHandle) {
 }
 
 #[tauri::command]
-fn api_usage(state: State<'_, AppState>) -> CmdResult<Vec<ApiUsage>> {
-    state.core()?.api_usage_this_month()
+async fn api_usage(state: State<'_, AppState>) -> CmdResult<Vec<ApiUsage>> {
+    blocking(&state, move |core| core.api_usage_this_month()).await
 }
 
 #[tauri::command]
-fn llm_usage(state: State<'_, AppState>) -> CmdResult<Vec<LlmUsage>> {
-    state.core()?.llm_usage_this_month()
+async fn llm_usage(state: State<'_, AppState>) -> CmdResult<Vec<LlmUsage>> {
+    blocking(&state, move |core| core.llm_usage_this_month()).await
 }
 
 // ---- costs ---------------------------------------------------------------
 
 #[tauri::command]
-fn cost_overview(
+async fn cost_overview(
     state: State<'_, AppState>,
     workspace_id: String,
     metric: CostMetric,
     linked_accounts: Vec<String>,
 ) -> CmdResult<CostOverview> {
-    state
-        .core()?
-        .cost_overview(&workspace_id, metric, &linked_accounts)
+    blocking(&state, move |core| {
+        core.cost_overview(&workspace_id, metric, &linked_accounts)
+    })
+    .await
 }
 
 #[tauri::command]
-fn cost_series(state: State<'_, AppState>, query: CostQuery) -> CmdResult<CostSeries> {
-    state.core()?.cost_series(&query)
+async fn cost_series(state: State<'_, AppState>, query: CostQuery) -> CmdResult<CostSeries> {
+    blocking(&state, move |core| core.cost_series(&query)).await
 }
 
 #[tauri::command]
-fn compare_costs(
+async fn compare_costs(
     state: State<'_, AppState>,
     query: CostQuery,
     prev_start: String,
     prev_end: String,
 ) -> CmdResult<Vec<CostComparisonRow>> {
-    state.core()?.compare_costs(&query, &prev_start, &prev_end)
+    blocking(&state, move |core| {
+        core.compare_costs(&query, &prev_start, &prev_end)
+    })
+    .await
 }
 
 #[tauri::command]
-fn dimension_values(
+async fn dimension_values(
     state: State<'_, AppState>,
     workspace_id: String,
     group_by: GroupBy,
 ) -> CmdResult<Vec<DimensionValue>> {
-    state.core()?.dimension_values(&workspace_id, &group_by)
+    blocking(&state, move |core| {
+        core.dimension_values(&workspace_id, &group_by)
+    })
+    .await
 }
 
 /// Asks where to save and writes the CSV (FR-16). Returns `false` if cancelled.
@@ -301,58 +329,65 @@ async fn export_csv(
 // ---- inventory -------------------------------------------------------------
 
 #[tauri::command]
-fn inventory_graph(
+async fn inventory_graph(
     state: State<'_, AppState>,
     workspace_id: String,
     filter: GraphFilter,
 ) -> CmdResult<Graph> {
-    state.core()?.inventory_graph(&workspace_id, &filter)
+    blocking(&state, move |core| {
+        core.inventory_graph(&workspace_id, &filter)
+    })
+    .await
 }
 
 #[tauri::command]
-fn inventory_facets(
+async fn inventory_facets(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> CmdResult<InventoryFacets> {
-    state.core()?.inventory_facets(&workspace_id)
+    blocking(&state, move |core| core.inventory_facets(&workspace_id)).await
 }
 
 #[tauri::command]
-fn tag_values(
+async fn tag_values(
     state: State<'_, AppState>,
     workspace_id: String,
     key: String,
 ) -> CmdResult<Vec<Facet>> {
-    state.core()?.tag_values(&workspace_id, &key)
+    blocking(&state, move |core| core.tag_values(&workspace_id, &key)).await
 }
 
 #[tauri::command]
-fn applications(
+async fn applications(
     state: State<'_, AppState>,
     workspace_id: String,
     tag_key: String,
 ) -> CmdResult<Vec<Application>> {
-    state.core()?.applications(&workspace_id, &tag_key)
+    blocking(&state, move |core| {
+        core.applications(&workspace_id, &tag_key)
+    })
+    .await
 }
 
 #[tauri::command]
-fn resource_neighbors(
+async fn resource_neighbors(
     state: State<'_, AppState>,
     workspace_id: String,
     arn: String,
     depth: usize,
 ) -> CmdResult<Vec<(Resource, usize)>> {
-    state
-        .core()?
-        .resource_neighbors(&workspace_id, &arn, depth.min(5))
+    blocking(&state, move |core| {
+        core.resource_neighbors(&workspace_id, &arn, depth.min(5))
+    })
+    .await
 }
 
 #[tauri::command]
-fn inventory_scans(
+async fn inventory_scans(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> CmdResult<Vec<InventoryScan>> {
-    state.core()?.inventory_scans(&workspace_id)
+    blocking(&state, move |core| core.inventory_scans(&workspace_id)).await
 }
 
 // ---- CUR -------------------------------------------------------------------
@@ -363,23 +398,26 @@ async fn validate_cur(state: State<'_, AppState>, config: CurConfig) -> CmdResul
 }
 
 #[tauri::command]
-fn save_cur_config(state: State<'_, AppState>, config: CurConfig) -> CmdResult<()> {
-    state.core()?.save_cur_config(&config)
+async fn save_cur_config(state: State<'_, AppState>, config: CurConfig) -> CmdResult<()> {
+    blocking(&state, move |core| core.save_cur_config(&config)).await
 }
 
 #[tauri::command]
-fn get_cur_config(state: State<'_, AppState>, account_id: String) -> CmdResult<Option<CurConfig>> {
-    state.core()?.cur_config(&account_id)
+async fn get_cur_config(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> CmdResult<Option<CurConfig>> {
+    blocking(&state, move |core| core.cur_config(&account_id)).await
 }
 
 #[tauri::command]
-fn delete_cur_config(state: State<'_, AppState>, account_id: String) -> CmdResult<()> {
-    state.core()?.delete_cur_config(&account_id)
+async fn delete_cur_config(state: State<'_, AppState>, account_id: String) -> CmdResult<()> {
+    blocking(&state, move |core| core.delete_cur_config(&account_id)).await
 }
 
 #[tauri::command]
-fn cur_status(state: State<'_, AppState>, workspace_id: String) -> CmdResult<CurStatus> {
-    state.core()?.cur_status(&workspace_id)
+async fn cur_status(state: State<'_, AppState>, workspace_id: String) -> CmdResult<CurStatus> {
+    blocking(&state, move |core| core.cur_status(&workspace_id)).await
 }
 
 #[derive(serde::Serialize)]
@@ -416,26 +454,32 @@ async fn save_cur_template(app: AppHandle) -> CmdResult<bool> {
 // ---- findings ----------------------------------------------------------------
 
 #[tauri::command]
-fn findings(
+async fn findings(
     state: State<'_, AppState>,
     workspace_id: String,
     include_hidden: bool,
 ) -> CmdResult<Vec<Finding>> {
-    state.core()?.findings(&workspace_id, include_hidden)
+    blocking(&state, move |core| {
+        core.findings(&workspace_id, include_hidden)
+    })
+    .await
 }
 
 #[tauri::command]
-fn set_finding_status(
+async fn set_finding_status(
     state: State<'_, AppState>,
     finding_id: String,
     status: FindingStatus,
 ) -> CmdResult<()> {
-    state.core()?.set_finding_status(&finding_id, &status)
+    blocking(&state, move |core| {
+        core.set_finding_status(&finding_id, &status)
+    })
+    .await
 }
 
 #[tauri::command]
-fn insights(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Insights> {
-    state.core()?.insights(&workspace_id)
+async fn insights(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Insights> {
+    blocking(&state, move |core| core.insights(&workspace_id)).await
 }
 
 // ---- assistant -----------------------------------------------------------------
@@ -486,99 +530,126 @@ async fn recheck_reference(
 }
 
 #[tauri::command]
-fn assistant_gaps(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<StoredTurn>> {
-    state.core()?.assistant_gaps(&workspace_id)
+async fn assistant_gaps(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<Vec<StoredTurn>> {
+    blocking(&state, move |core| core.assistant_gaps(&workspace_id)).await
 }
 
 #[tauri::command]
-fn reference_turns(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<StoredTurn>> {
-    state.core()?.reference_turns(&workspace_id)
+async fn reference_turns(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<Vec<StoredTurn>> {
+    blocking(&state, move |core| core.reference_turns(&workspace_id)).await
 }
 
 #[tauri::command]
-fn set_reference_turn(state: State<'_, AppState>, turn_id: i64, reference: bool) -> CmdResult<()> {
-    state.core()?.set_reference_turn(turn_id, reference)
+async fn set_reference_turn(
+    state: State<'_, AppState>,
+    turn_id: i64,
+    reference: bool,
+) -> CmdResult<()> {
+    blocking(&state, move |core| {
+        core.set_reference_turn(turn_id, reference)
+    })
+    .await
 }
 
 #[tauri::command]
-fn assistant_conversations(
+async fn assistant_conversations(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> CmdResult<Vec<ConversationSummary>> {
-    state.core()?.assistant_conversations(&workspace_id)
+    blocking(&state, move |core| {
+        core.assistant_conversations(&workspace_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn assistant_turns(
+async fn assistant_turns(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> CmdResult<Vec<StoredTurn>> {
-    state.core()?.assistant_turns(&conversation_id)
+    blocking(&state, move |core| core.assistant_turns(&conversation_id)).await
 }
 
 #[tauri::command]
-fn rate_assistant_turn(
+async fn rate_assistant_turn(
     state: State<'_, AppState>,
     turn_id: i64,
     rating: Option<Rating>,
     note: Option<String>,
 ) -> CmdResult<()> {
-    state
-        .core()?
-        .rate_assistant_turn(turn_id, rating, note.as_deref())
+    blocking(&state, move |core| {
+        core.rate_assistant_turn(turn_id, rating, note.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-fn delete_assistant_conversation(
+async fn delete_assistant_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> CmdResult<()> {
-    state
-        .core()?
-        .delete_assistant_conversation(&conversation_id)
+    blocking(&state, move |core| {
+        core.delete_assistant_conversation(&conversation_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn workspace_context(state: State<'_, AppState>, workspace_id: String) -> CmdResult<StoredContext> {
-    state.core()?.workspace_context(&workspace_id)
+async fn workspace_context(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> CmdResult<StoredContext> {
+    blocking(&state, move |core| core.workspace_context(&workspace_id)).await
 }
 
 #[tauri::command]
-fn save_workspace_context(
+async fn save_workspace_context(
     state: State<'_, AppState>,
     workspace_id: String,
     context: WorkspaceContext,
 ) -> CmdResult<StoredContext> {
-    state.core()?.save_workspace_context(&workspace_id, context)
+    blocking(&state, move |core| {
+        core.save_workspace_context(&workspace_id, context)
+    })
+    .await
 }
 
 #[tauri::command]
-fn workspace_context_history(
+async fn workspace_context_history(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> CmdResult<Vec<ContextRevision>> {
-    state.core()?.workspace_context_history(&workspace_id)
+    blocking(&state, move |core| {
+        core.workspace_context_history(&workspace_id)
+    })
+    .await
 }
 
 /// Stores (or with `None`, removes) the provider API key in the OS keychain.
 #[tauri::command]
-fn set_llm_api_key(state: State<'_, AppState>, key: Option<String>) -> CmdResult<()> {
-    state.core()?.set_llm_api_key(key.as_deref())
+async fn set_llm_api_key(state: State<'_, AppState>, key: Option<String>) -> CmdResult<()> {
+    blocking(&state, move |core| core.set_llm_api_key(key.as_deref())).await
 }
 
 #[tauri::command]
-fn has_llm_api_key(state: State<'_, AppState>) -> CmdResult<bool> {
-    state.core()?.has_llm_api_key()
+async fn has_llm_api_key(state: State<'_, AppState>) -> CmdResult<bool> {
+    blocking(&state, move |core| core.has_llm_api_key()).await
 }
 
 #[tauri::command]
-fn llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<LlmLogEntry>> {
-    state.core()?.llm_log(&workspace_id, 200)
+async fn llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Vec<LlmLogEntry>> {
+    blocking(&state, move |core| core.llm_log(&workspace_id, 200)).await
 }
 
 #[tauri::command]
-fn clear_llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<()> {
-    state.core()?.clear_llm_log(&workspace_id)
+async fn clear_llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<()> {
+    blocking(&state, move |core| core.clear_llm_log(&workspace_id)).await
 }
 
 // ---- backup (FR-53) -----------------------------------------------------------
@@ -701,7 +772,7 @@ pub fn run() {
     #[cfg(feature = "updater")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
-        .manage(AppState(core))
+        .manage(AppState(core.map(Arc::new)))
         .setup(|app| {
             spawn_scheduler(app.handle().clone());
             Ok(())
