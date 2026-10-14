@@ -8,6 +8,7 @@ pub mod aws;
 pub mod cost;
 pub mod cur;
 pub mod error;
+pub mod findings;
 pub mod inventory;
 pub mod model;
 pub mod profiles;
@@ -27,6 +28,7 @@ pub use cost::{
 };
 pub use cur::{CurConfig, CurValidation};
 pub use error::{Error, Result};
+pub use findings::{Finding, FindingStatus};
 pub use inventory::graph::{Application, Facet, Graph, GraphFilter, InventoryFacets, TagFilter};
 pub use inventory::{Resource, ResourceType};
 pub use model::{Account, ConnectionTest, SyncState, SyncStatus, Workspace};
@@ -75,6 +77,8 @@ pub struct AccountSyncReport {
     pub inventory: Option<inventory::sync::InventoryReport>,
     pub cur: Option<cur::CurReport>,
     pub errors: Vec<String>,
+    /// Non-fatal problems (prices, commitments) that don't fail the sync.
+    pub warnings: Vec<String>,
 }
 
 /// Removes an account from the in-progress set when its sync ends.
@@ -306,6 +310,20 @@ impl Afinin {
             }
         }
 
+        if report.inventory.is_some() || report.costs.is_some() {
+            let config = async {
+                let profile = self.profile(&account.profile)?;
+                aws::sdk_config(&profile, self.secrets.as_ref()).await
+            }
+            .await;
+            if let Ok(config) = config {
+                report.warnings.extend(
+                    self.refresh_finding_inputs(&config, account_id, &settings)
+                        .await,
+                );
+            }
+        }
+
         let error = (!report.errors.is_empty()).then(|| report.errors.join("; "));
         self.db().set_sync_finished(account_id, error.as_deref())?;
         match error {
@@ -533,5 +551,479 @@ impl Afinin {
 
     pub fn cur_status(&self, workspace_id: &str) -> Result<CurStatus> {
         self.db().cur_status(workspace_id)
+    }
+
+    // ---- findings (FR-30..FR-34) -----------------------------------------
+
+    /// Refreshes public prices, commitment coverage and (opt-in) AWS anomalies.
+    async fn refresh_finding_inputs(
+        &self,
+        config: &aws_config::SdkConfig,
+        account_id: &str,
+        settings: &Settings,
+    ) -> Vec<String> {
+        use findings::pricing::PriceItem;
+        let mut warnings = Vec::new();
+
+        // Public prices for what this account actually has (Price List API is free).
+        let needed: std::collections::BTreeMap<String, std::collections::BTreeSet<PriceItem>> = {
+            let db = self.db();
+            let account = db.get_account(account_id).ok();
+            let ws = account.map(|a| a.workspace_id).unwrap_or_default();
+            let (resources, _) = db.workspace_inventory(&ws).unwrap_or_default();
+            let mut needed: std::collections::BTreeMap<
+                String,
+                std::collections::BTreeSet<PriceItem>,
+            > = Default::default();
+            for r in &resources {
+                let items = needed.entry(r.region.clone()).or_default();
+                let attr = |k: &str| {
+                    r.attrs
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                match r.resource_type {
+                    ResourceType::EbsVolume => {
+                        let t = attr("volume_type");
+                        items.insert(PriceItem::EbsStorage(t.clone()));
+                        if matches!(t.as_str(), "gp3" | "io1" | "io2") {
+                            items.insert(PriceItem::EbsIops(t.clone()));
+                        }
+                        if t == "gp3" {
+                            items.insert(PriceItem::EbsThroughput);
+                        }
+                    }
+                    ResourceType::EbsSnapshot => {
+                        items.insert(PriceItem::EbsSnapshot);
+                    }
+                    ResourceType::ElasticIp => {
+                        items.insert(PriceItem::PublicIpv4Idle);
+                    }
+                    ResourceType::NatGateway => {
+                        items.insert(PriceItem::NatGatewayHour);
+                    }
+                    ResourceType::LoadBalancer => {
+                        items.insert(PriceItem::LoadBalancerHour(attr("type")));
+                    }
+                    _ => {}
+                }
+            }
+            needed.retain(|region, items| region != "global" && !items.is_empty());
+            needed
+        };
+        let cutoff = (time::OffsetDateTime::now_utc()
+            - time::Duration::days(storage::PRICE_TTL_DAYS))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default();
+        for (region, items) in needed {
+            let fresh = self
+                .db()
+                .fresh_price_keys(&region, &cutoff)
+                .unwrap_or_default();
+            let stale: Vec<PriceItem> = items
+                .into_iter()
+                .filter(|i| !fresh.contains(&i.key()))
+                .collect();
+            if stale.is_empty() {
+                continue;
+            }
+            match findings::pricing::fetch(config, &region, &stale).await {
+                Ok(prices) => {
+                    let rows: Vec<(String, f64)> =
+                        prices.iter().map(|(i, p)| (i.key(), *p)).collect();
+                    if let Err(e) = self.db().save_prices(&region, &rows) {
+                        warnings.push(format!("prices: {e}"));
+                    }
+                }
+                Err(e) => {
+                    warnings.push(format!(
+                        "public prices ({region}): {e}; using built-in list prices"
+                    ));
+                    break;
+                }
+            }
+        }
+
+        let today = cost::dates::today_utc();
+        let (start, end) = (
+            cost::dates::format(cost::dates::add_days(today, -30)),
+            cost::dates::format(today),
+        );
+        if settings.commitments_enabled {
+            let week_ago = (time::OffsetDateTime::now_utc() - time::Duration::days(7))
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default();
+            let due = self
+                .db()
+                .commitments_fetched_at(account_id)
+                .ok()
+                .flatten()
+                .is_none_or(|t| t < week_ago);
+            if due {
+                let (summaries, calls, errs) =
+                    findings::commitments::fetch(config, &start, &end).await;
+                let db = self.db();
+                let _ = db.record_api_call(
+                    account_id,
+                    "ce",
+                    "Get*Coverage/Utilization",
+                    calls as f64 * cost::source::CE_REQUEST_COST_USD,
+                );
+                if let Err(e) = db.save_commitments(account_id, &summaries) {
+                    warnings.push(format!("commitments: {e}"));
+                }
+                warnings.extend(errs);
+            }
+        }
+        if settings.import_aws_anomalies {
+            match findings::commitments::aws_anomalies(config, &start).await {
+                Ok((anomalies, calls)) => {
+                    let db = self.db();
+                    let _ = db.record_api_call(
+                        account_id,
+                        "ce",
+                        "GetAnomalies",
+                        calls as f64 * cost::source::CE_REQUEST_COST_USD,
+                    );
+                    if let Err(e) = db.save_aws_anomalies(account_id, &anomalies) {
+                        warnings.push(format!("AWS anomalies: {e}"));
+                    }
+                }
+                Err(e) => warnings.push(format!("AWS anomalies: {e}")),
+            }
+        }
+        warnings
+    }
+
+    /// All findings for a workspace, newest state applied (FR-33). Dismissed
+    /// and snoozed findings are included only when `include_hidden`.
+    pub fn findings(&self, workspace_id: &str, include_hidden: bool) -> Result<Vec<Finding>> {
+        let today = cost::dates::today_utc();
+        let today_s = cost::dates::format(today);
+        let settings = self.settings()?;
+        let db = self.db();
+        let (resources, relations) = db.workspace_inventory(workspace_id)?;
+        let edges = inventory::graph::resolve(&resources, &relations);
+        let prices = db.price_book()?;
+        let window = (
+            cost::dates::format(cost::dates::add_days(today, -30)),
+            today_s.clone(),
+        );
+        let actual =
+            db.cur_resource_costs(workspace_id, CostMetric::NetUnblended, &window.0, &window.1)?;
+        let nat = db.cur_nat_usage(workspace_id, &window.0, &window.1)?;
+        let empty = std::collections::HashMap::new();
+
+        let mut all = findings::rules::evaluate(&findings::rules::RuleInput {
+            resources: &resources,
+            edges: &edges,
+            prices: &prices,
+            actual_costs: &actual,
+            nat_gb: nat.as_ref().map(|n| &n.0),
+            nat_processing_cost: nat.as_ref().map_or(&empty, |n| &n.1),
+            snapshot_age_days: settings.snapshot_age_days,
+            today,
+        });
+
+        let daily = db.daily_service_costs(
+            workspace_id,
+            settings.default_metric,
+            &cost::dates::format(cost::dates::add_days(
+                today,
+                -(findings::anomalies::BASELINE_DAYS + findings::anomalies::RECENT_DAYS),
+            )),
+            &today_s,
+        )?;
+        all.extend(findings::anomalies::detect(
+            &daily,
+            settings.anomaly_sensitivity,
+            today,
+        ));
+
+        for (_, a) in db.aws_anomalies(workspace_id)? {
+            let mut f =
+                findings::Finding::new("aws-anomaly", findings::FindingKind::Anomaly, &a.id)
+                    .evidence("start", &a.start)
+                    .evidence("end", &a.end)
+                    .evidence("root_causes", &a.root_causes)
+                    .evidence("source", "AWS Cost Anomaly Detection");
+            f.impact = Some(a.impact);
+            f.severity = findings::Severity::from_amount(a.impact);
+            f.title = format!(
+                "AWS detected a cost anomaly{}",
+                a.dimension
+                    .as_deref()
+                    .map(|d| format!(" in {d}"))
+                    .unwrap_or_default()
+            );
+            f.summary = format!(
+                "Estimated impact {:.2}{}.",
+                a.impact,
+                a.root_causes
+                    .first()
+                    .map(|c| format!("; top root cause: {c}"))
+                    .unwrap_or_default()
+            );
+            f.how_to_fix = "Open the anomaly in the AWS Cost Anomaly Detection console for details and give AWS feedback if it's expected.".into();
+            all.push(f);
+        }
+
+        let ids: Vec<&str> = all.iter().map(|f| f.id.as_str()).collect();
+        let seen = db.mark_findings_seen(&ids, &today_s)?;
+        let states = db.finding_states()?;
+        for f in &mut all {
+            f.first_seen = seen.get(&f.id).cloned();
+            if let Some(s) = states.get(&f.id) {
+                f.status = s.clone();
+            }
+            // An expired snooze reopens the finding.
+            if let findings::FindingStatus::Snoozed { until } = &f.status
+                && *until <= today_s
+            {
+                f.status = findings::FindingStatus::Open;
+            }
+        }
+        if !include_hidden {
+            all.retain(|f| f.status == findings::FindingStatus::Open);
+        }
+        all.sort_by(|a, b| {
+            b.severity.cmp(&a.severity).then_with(|| {
+                b.monthly_savings
+                    .or(b.impact)
+                    .unwrap_or(0.0)
+                    .total_cmp(&a.monthly_savings.or(a.impact).unwrap_or(0.0))
+            })
+        });
+        Ok(all)
+    }
+
+    pub fn set_finding_status(&self, finding_id: &str, status: &FindingStatus) -> Result<()> {
+        self.db().set_finding_status(finding_id, status)
+    }
+
+    /// Patterns and trends (FR-32).
+    pub fn insights(&self, workspace_id: &str) -> Result<Insights> {
+        let today = cost::dates::today_utc();
+        let d = |n| cost::dates::format(cost::dates::add_days(today, n));
+        let metric = self.settings()?.default_metric;
+        let query = |group_by: GroupBy, start: String, end: String| CostQuery {
+            workspace_id: workspace_id.to_owned(),
+            start,
+            end,
+            granularity: Granularity::Daily,
+            metric,
+            group_by,
+            filter: CostFilter::default(),
+        };
+        let db = self.db();
+        let mut top_movers =
+            db.compare_costs(&query(GroupBy::Service, d(-30), d(0)), &d(-60), &d(-30))?;
+        top_movers.truncate(10);
+        let usage = db.cost_series(&query(GroupBy::UsageType, d(-30), d(0)))?;
+        let mut data_transfer: Vec<insights::Labeled> = usage
+            .groups
+            .iter()
+            .filter(|g| insights::is_data_transfer(&g.key))
+            .map(|g| insights::Labeled {
+                key: g.key.clone(),
+                label: insights::describe_usage_type(&g.key),
+                total: g.total,
+            })
+            .collect();
+        data_transfer.truncate(15);
+        let labels: std::collections::HashMap<String, String> = db
+            .list_accounts(Some(workspace_id))?
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect();
+        let commitments = db
+            .commitments(workspace_id)?
+            .into_iter()
+            .map(|(acct, s)| (labels.get(&acct).cloned().unwrap_or(acct), s))
+            .collect();
+        Ok(Insights {
+            top_movers,
+            data_transfer,
+            data_transfer_total: usage
+                .groups
+                .iter()
+                .filter(|g| insights::is_data_transfer(&g.key))
+                .map(|g| g.total)
+                .sum(),
+            commitments,
+            unit: usage.unit,
+        })
+    }
+}
+
+/// Patterns and trends for the Insights view (FR-32).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Insights {
+    /// Services with the largest change, last 30 days vs the 30 before.
+    pub top_movers: Vec<CostComparisonRow>,
+    /// Data transfer usage types, last 30 days.
+    pub data_transfer: Vec<insights::Labeled>,
+    pub data_transfer_total: f64,
+    /// Savings Plans / RI coverage per connected account.
+    pub commitments: Vec<(String, findings::commitments::CommitmentSummary)>,
+    pub unit: String,
+}
+
+pub mod insights {
+    //! Helpers for the Insights view.
+
+    #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+    pub struct Labeled {
+        pub key: String,
+        pub label: String,
+        pub total: f64,
+    }
+
+    /// Usage types billed for moving data (Cost Explorer naming).
+    pub fn is_data_transfer(usage_type: &str) -> bool {
+        usage_type.contains("DataTransfer")
+            || usage_type.contains("-Bytes")
+            || usage_type.ends_with("Bytes")
+    }
+
+    /// `USE1-DataTransfer-Out-Bytes` → `Data transfer out to the internet (USE1)`.
+    pub fn describe_usage_type(usage_type: &str) -> String {
+        let (region, rest) = match usage_type.split_once('-') {
+            Some((r, rest))
+                if r.len() <= 5
+                    && r.chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) =>
+            {
+                (Some(r), rest)
+            }
+            _ => (None, usage_type),
+        };
+        let what = if rest.starts_with("DataTransfer-Out-Bytes") {
+            "Data transfer out to the internet".to_owned()
+        } else if rest.starts_with("DataTransfer-In-Bytes") {
+            "Data transfer in".to_owned()
+        } else if rest.starts_with("DataTransfer-Regional-Bytes") {
+            "Data transfer between availability zones".to_owned()
+        } else if rest.contains("NatGateway-Bytes") {
+            "NAT gateway data processing".to_owned()
+        } else if rest.contains("-AWS-Out-Bytes") || rest.contains("-AWS-In-Bytes") {
+            "Data transfer between regions".to_owned()
+        } else if rest.contains("CloudFront") || rest.contains("DataTransfer-Out-OBytes") {
+            "CloudFront / origin data transfer".to_owned()
+        } else {
+            rest.replace('-', " ")
+        };
+        match region {
+            Some(r) => format!("{what} ({r})"),
+            None => what,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn describes_usage_types() {
+            assert!(is_data_transfer("USE1-DataTransfer-Out-Bytes"));
+            assert!(is_data_transfer("EUW1-NatGateway-Bytes"));
+            assert!(!is_data_transfer("USE1-BoxUsage:m5.large"));
+            assert_eq!(
+                describe_usage_type("USE1-DataTransfer-Out-Bytes"),
+                "Data transfer out to the internet (USE1)"
+            );
+            assert_eq!(
+                describe_usage_type("USE1-EUW1-AWS-Out-Bytes"),
+                "Data transfer between regions (USE1)"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inventory::{Collected, Resource, ResourceType, arn};
+
+    fn afinin_with_unattached_volume() -> (Afinin, String) {
+        let storage = Storage::open_in_memory().unwrap();
+        let ws = storage.create_workspace("W").unwrap();
+        let acc = storage
+            .add_account(&ws.id, "A", "a", ProfileKind::Sso)
+            .unwrap();
+        let mut found = Collected::default();
+        let mut vol = Resource::new(
+            ResourceType::EbsVolume,
+            arn::ec2("us-east-1", "1", "volume", "vol-1"),
+            "1",
+            "us-east-1",
+            "vol-1",
+        );
+        vol.attrs
+            .insert("state".into(), serde_json::json!("available"));
+        vol.attrs
+            .insert("volume_type".into(), serde_json::json!("gp2"));
+        vol.attrs.insert("size_gib".into(), serde_json::json!(200));
+        found.resources.push(vol);
+        storage
+            .replace_inventory(&acc.id, "us-east-1", &found)
+            .unwrap();
+        let afinin = Afinin::with_storage(
+            storage,
+            Arc::new(MemoryStore::default()),
+            AwsFiles::from_env(),
+        );
+        (afinin, ws.id)
+    }
+
+    #[test]
+    fn finding_lifecycle() {
+        let (afinin, ws) = afinin_with_unattached_volume();
+        let open = afinin.findings(&ws, false).unwrap();
+        assert_eq!(open.len(), 1);
+        let f = &open[0];
+        assert_eq!(f.rule, "ebs-unattached");
+        assert_eq!(f.monthly_savings, Some(20.0)); // 200 GiB × $0.10 gp2
+        assert_eq!(
+            f.first_seen.as_deref(),
+            Some(cost::dates::format(cost::dates::today_utc()).as_str())
+        );
+
+        afinin
+            .set_finding_status(
+                &f.id,
+                &FindingStatus::Dismissed {
+                    note: Some("keep".into()),
+                },
+            )
+            .unwrap();
+        assert!(afinin.findings(&ws, false).unwrap().is_empty());
+        assert_eq!(afinin.findings(&ws, true).unwrap().len(), 1);
+
+        // A snooze in the past has expired: the finding is open again.
+        afinin
+            .set_finding_status(
+                &f.id,
+                &FindingStatus::Snoozed {
+                    until: "2000-01-01".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(afinin.findings(&ws, false).unwrap().len(), 1);
+        afinin
+            .set_finding_status(
+                &f.id,
+                &FindingStatus::Snoozed {
+                    until: "2999-01-01".into(),
+                },
+            )
+            .unwrap();
+        assert!(afinin.findings(&ws, false).unwrap().is_empty());
+        afinin
+            .set_finding_status(&f.id, &FindingStatus::Open)
+            .unwrap();
+        assert_eq!(afinin.findings(&ws, false).unwrap().len(), 1);
     }
 }

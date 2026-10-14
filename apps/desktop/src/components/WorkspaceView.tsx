@@ -10,13 +10,14 @@ import { SsoLoginDialog } from "./SsoLoginDialog";
 import { ConfirmDialog } from "./Modal";
 import { CostDashboard } from "./CostDashboard";
 import { InventoryView } from "./InventoryView";
+import { FindingsView } from "./FindingsView";
 import { CurSetupDialog } from "./CurSetupDialog";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
 
-type Tab = "costs" | "inventory" | "accounts";
+type Tab = "costs" | "findings" | "inventory" | "accounts";
 
-const TAB_LABEL: Record<Tab, string> = { costs: "Costs", inventory: "Inventory", accounts: "Accounts" };
+const TAB_LABEL: Record<Tab, string> = { costs: "Costs", findings: "Findings", inventory: "Inventory", accounts: "Accounts" };
 
 interface Props {
   workspace: Workspace;
@@ -203,7 +204,7 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
       ) : (
         <>
           <nav className="tabs" role="tablist">
-            {(["costs", "inventory", "accounts"] as Tab[]).map((t) => (
+            {(["costs", "findings", "inventory", "accounts"] as Tab[]).map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
                 {TAB_LABEL[t]}
                 {t === "accounts" && failedSyncs > 0 && <span className="badge warn">{failedSyncs} failed</span>}
@@ -221,6 +222,8 @@ export function WorkspaceView({ workspace, settings, onChanged }: Props) {
               onSync={syncAll}
               curAvailable={(cur?.billing_periods.length ?? 0) > 0}
             />
+          ) : tab === "findings" ? (
+            <FindingsView key={workspace.id} workspaceId={workspace.id} dataVersion={dataVersion} />
           ) : tab === "inventory" ? (
             <InventoryView
               key={workspace.id}

@@ -67,6 +67,7 @@ resource_types! {
     EksCluster => "eks:cluster", "EKS cluster", Compute, Some("Amazon Elastic Container Service for Kubernetes");
     LambdaFunction => "lambda:function", "Lambda function", Compute, Some("AWS Lambda");
     EbsVolume => "ec2:volume", "EBS volume", Storage, EC2_OTHER;
+    EbsSnapshot => "ec2:snapshot", "EBS snapshot", Storage, EC2_OTHER;
     RdsInstance => "rds:db", "RDS instance", Data, Some("Amazon Relational Database Service");
     RdsCluster => "rds:cluster", "RDS cluster", Data, Some("Amazon Relational Database Service");
     DynamoDbTable => "dynamodb:table", "DynamoDB table", Data, Some("Amazon DynamoDB");
@@ -89,6 +90,12 @@ impl ResourceType {
             self,
             Self::Vpc | Self::Subnet | Self::SecurityGroup | Self::NetworkInterface
         )
+    }
+
+    /// Shown in the graph only when explicitly selected by type: there can be
+    /// thousands and they connect to nothing running.
+    pub fn is_bulk(self) -> bool {
+        matches!(self, Self::EbsSnapshot)
     }
 }
 

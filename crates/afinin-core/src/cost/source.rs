@@ -82,6 +82,10 @@ impl CostExplorer {
             client: Client::from_conf(conf),
         }
     }
+
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
 }
 
 fn interval(start: &str, end: &str) -> Result<DateInterval> {

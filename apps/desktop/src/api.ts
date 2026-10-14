@@ -18,6 +18,9 @@ import type {
   CurConfig,
   CurStatus,
   CurValidation,
+  Finding,
+  FindingStatus,
+  Insights,
   Application,
   Facet,
   Graph,
@@ -83,6 +86,11 @@ export const api = {
   curSetupHelp: (bucket: string) =>
     invoke<{ deploy_command: string; read_policy: string }>("cur_setup_help", { bucket }),
   saveCurTemplate: () => invoke<boolean>("save_cur_template"),
+  findings: (workspaceId: string, includeHidden: boolean) =>
+    invoke<Finding[]>("findings", { workspaceId, includeHidden }),
+  setFindingStatus: (findingId: string, status: FindingStatus) =>
+    invoke<void>("set_finding_status", { findingId, status }),
+  insights: (workspaceId: string) => invoke<Insights>("insights", { workspaceId }),
   exportCsv: (query: CostQuery, compare: [string, string] | null, fileName: string) =>
     invoke<boolean>("export_csv", { query, compare, fileName }),
 };

@@ -1,0 +1,524 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Waste rules (FR-31, MVP set D-2), each with an estimated monthly saving.
+
+use std::collections::{HashMap, HashSet};
+
+use time::Date;
+
+use super::pricing::{HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource};
+use super::{Finding, FindingKind, FindingResource, SavingsBasis, Severity};
+use crate::cost::dates;
+use crate::inventory::graph::GraphEdge;
+use crate::inventory::{RelationKind, Resource, ResourceType as T};
+
+/// Everything the rules look at.
+pub struct RuleInput<'a> {
+    pub resources: &'a [Resource],
+    pub edges: &'a [GraphEdge],
+    pub prices: &'a PriceBook,
+    /// Last-30-day net cost per resource ID/ARN, from CUR (empty without CUR).
+    pub actual_costs: &'a HashMap<String, f64>,
+    /// Last-30-day NAT gateway GB processed per resource ID (CUR), if known.
+    pub nat_gb: Option<&'a HashMap<String, f64>>,
+    /// Last-30-day NAT data processing cost per resource ID (CUR).
+    pub nat_processing_cost: &'a HashMap<String, f64>,
+    pub snapshot_age_days: u32,
+    pub today: Date,
+}
+
+impl RuleInput<'_> {
+    fn actual(&self, r: &Resource) -> Option<f64> {
+        self.actual_costs
+            .get(&r.arn)
+            .or_else(|| self.actual_costs.get(&r.native_id))
+            .copied()
+            .filter(|c| *c > 0.0)
+    }
+
+    /// CUR actual cost when known, else the public-price estimate.
+    fn savings(&self, r: &Resource, estimate: f64) -> (f64, SavingsBasis) {
+        match self.actual(r) {
+            Some(c) => (c, SavingsBasis::Actual),
+            None => (estimate, SavingsBasis::PublicPrice),
+        }
+    }
+}
+
+fn str_attr<'a>(r: &'a Resource, key: &str) -> Option<&'a str> {
+    r.attrs.get(key).and_then(|v| v.as_str())
+}
+
+fn num_attr(r: &Resource, key: &str) -> Option<f64> {
+    r.attrs.get(key).and_then(|v| v.as_f64())
+}
+
+fn subject(r: &Resource) -> FindingResource {
+    FindingResource {
+        arn: r.arn.clone(),
+        label: r.display_name().to_owned(),
+        resource_type: Some(r.resource_type),
+    }
+}
+
+fn base(rule: &'static str, r: &Resource) -> Finding {
+    let mut f = Finding::new(rule, FindingKind::Waste, &r.arn);
+    f.account_id = r.account_id.clone();
+    f.region = r.region.clone();
+    f.resources.push(subject(r));
+    f
+}
+
+fn finish(
+    mut f: Finding,
+    savings: f64,
+    basis: SavingsBasis,
+    source: Option<PriceSource>,
+) -> Finding {
+    f.severity = Severity::from_amount(savings);
+    f.monthly_savings = Some((savings * 100.0).round() / 100.0);
+    f.savings_basis = Some(basis);
+    if basis == SavingsBasis::PublicPrice {
+        f = f.evidence(
+            "price_source",
+            match source {
+                Some(PriceSource::PriceList) => "AWS Price List (public price)",
+                _ => "built-in us-east-1 list price (public price)",
+            },
+        );
+    }
+    f
+}
+
+/// Monthly public-price cost of an EBS volume, with the price source used.
+pub fn volume_monthly_cost(prices: &PriceBook, v: &Resource) -> (f64, PriceSource) {
+    let kind = str_attr(v, "volume_type").unwrap_or("gp2").to_owned();
+    let size = num_attr(v, "size_gib").unwrap_or(0.0);
+    let (storage, src) = prices.get(&v.region, &PriceItem::EbsStorage(kind.clone()));
+    let mut cost = size * storage;
+    let iops = num_attr(v, "iops").unwrap_or(0.0);
+    match kind.as_str() {
+        "gp3" => {
+            cost += (iops - 3000.0).max(0.0)
+                * prices.get(&v.region, &PriceItem::EbsIops(kind.clone())).0;
+            let tp = num_attr(v, "throughput_mibps").unwrap_or(125.0);
+            cost += (tp - 125.0).max(0.0) * prices.get(&v.region, &PriceItem::EbsThroughput).0;
+        }
+        "io1" | "io2" => cost += iops * prices.get(&v.region, &PriceItem::EbsIops(kind.clone())).0,
+        _ => {}
+    }
+    (cost, src)
+}
+
+fn age_days(r: &Resource, key: &str, today: Date) -> Option<i64> {
+    let created = str_attr(r, key)?;
+    let date = dates::parse(created.get(..10)?).ok()?;
+    Some((today - date).whole_days())
+}
+
+pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let by_arn: HashMap<&str, &Resource> = input
+        .resources
+        .iter()
+        .map(|r| (r.arn.as_str(), r))
+        .collect();
+
+    for r in input.resources {
+        match r.resource_type {
+            T::EbsVolume if str_attr(r, "state") == Some("available") => {
+                let (estimate, src) = volume_monthly_cost(input.prices, r);
+                let (savings, basis) = input.savings(r, estimate);
+                let mut f = base("ebs-unattached", r)
+                    .evidence("size_gib", num_attr(r, "size_gib"))
+                    .evidence("volume_type", str_attr(r, "volume_type"))
+                    .evidence("age_days", age_days(r, "create_time", input.today));
+                f.title = format!("Unattached EBS volume {}", r.display_name());
+                f.summary = format!(
+                    "{} GiB {} volume not attached to any instance. You pay for provisioned storage whether it's used or not.",
+                    num_attr(r, "size_gib").unwrap_or(0.0),
+                    str_attr(r, "volume_type").unwrap_or("EBS")
+                );
+                f.how_to_fix = "Check that no one needs the data. Create a snapshot if you might (snapshots cost less per GB), \
+                                then delete the volume in the EC2 console (Volumes → Actions → Delete) or remove it from your IaC."
+                    .into();
+                out.push(finish(f, savings, basis, Some(src)));
+            }
+            T::ElasticIp if r.attrs.get("associated").and_then(|v| v.as_bool()) == Some(false) => {
+                let (hourly, src) = input.prices.get(&r.region, &PriceItem::PublicIpv4Idle);
+                let (savings, basis) = input.savings(r, hourly * HOURS_PER_MONTH);
+                let mut f =
+                    base("eip-unassociated", r).evidence("public_ip", str_attr(r, "public_ip"));
+                f.title = format!("Unassociated Elastic IP {}", r.display_name());
+                f.summary = "An allocated public IPv4 address not attached to anything is billed every hour.".into();
+                f.how_to_fix =
+                    "If nothing depends on this address (DNS records, allow-lists), release it: \
+                                EC2 console → Elastic IPs → Actions → Release."
+                        .into();
+                out.push(finish(f, savings, basis, Some(src)));
+            }
+            T::LoadBalancer if str_attr(r, "state") == Some("active") => {
+                let groups: Vec<&Resource> = input
+                    .edges
+                    .iter()
+                    .filter(|e| e.source == r.arn && e.kind == RelationKind::RoutesTo)
+                    .filter_map(|e| by_arn.get(e.target.as_str()).copied())
+                    .filter(|t| t.resource_type == T::TargetGroup)
+                    .collect();
+                let targets: f64 = groups.iter().filter_map(|g| num_attr(g, "targets")).sum();
+                if targets > 0.0 {
+                    continue;
+                }
+                let kind = str_attr(r, "type").unwrap_or("application").to_owned();
+                let (hourly, src) = input
+                    .prices
+                    .get(&r.region, &PriceItem::LoadBalancerHour(kind.clone()));
+                let (savings, basis) = input.savings(r, hourly * HOURS_PER_MONTH);
+                let mut f = base("elb-idle", r)
+                    .evidence("type", &kind)
+                    .evidence("target_groups", groups.len())
+                    .evidence("registered_targets", 0);
+                f.title = format!("Idle load balancer {}", r.display_name());
+                f.summary = if groups.is_empty() {
+                    "This load balancer has no target groups, so it can't serve traffic, but it is billed every hour.".into()
+                } else {
+                    "None of this load balancer's target groups have registered targets.".into()
+                };
+                f.how_to_fix = "Confirm nothing routes to its DNS name (Route 53 records, CloudFront origins), \
+                                then delete it in the EC2 console → Load Balancers, or in your IaC."
+                    .into();
+                out.push(finish(f, savings, basis, Some(src)));
+            }
+            T::Ec2Instance if str_attr(r, "state") == Some("stopped") => {
+                let volumes: Vec<&Resource> = input
+                    .edges
+                    .iter()
+                    .filter(|e| e.source == r.arn && e.kind == RelationKind::Attached)
+                    .filter_map(|e| by_arn.get(e.target.as_str()).copied())
+                    .filter(|v| v.resource_type == T::EbsVolume)
+                    .collect();
+                if volumes.is_empty() {
+                    continue;
+                }
+                let mut savings = 0.0;
+                let mut basis = SavingsBasis::Actual;
+                let mut source = None;
+                for v in &volumes {
+                    let (estimate, src) = volume_monthly_cost(input.prices, v);
+                    let (s, b) = input.savings(v, estimate);
+                    savings += s;
+                    if b == SavingsBasis::PublicPrice {
+                        basis = SavingsBasis::PublicPrice;
+                        source = Some(src);
+                    }
+                }
+                let mut f = base("ec2-stopped-with-ebs", r)
+                    .evidence("volumes", volumes.len())
+                    .evidence("stopped_reason", str_attr(r, "state_reason"));
+                f.resources.extend(volumes.iter().map(|v| subject(v)));
+                f.title = format!(
+                    "Stopped instance {} still pays for {} volume(s)",
+                    r.display_name(),
+                    volumes.len()
+                );
+                f.summary = "Stopped instances don't pay for compute, but their EBS volumes (and any Elastic IPs) keep billing.".into();
+                f.how_to_fix = "If the instance is no longer needed, create an AMI or snapshot for safekeeping and terminate it. \
+                                If it is needed occasionally, consider a smaller root volume or gp3."
+                    .into();
+                out.push(finish(f, savings, basis, source));
+            }
+            T::EbsSnapshot => {
+                let Some(age) = age_days(r, "create_time", input.today) else {
+                    continue;
+                };
+                if age < input.snapshot_age_days as i64
+                    || str_attr(r, "storage_tier") == Some("archive")
+                {
+                    continue;
+                }
+                let size = num_attr(r, "size_gib").unwrap_or(0.0);
+                let (per_gb, src) = input.prices.get(&r.region, &PriceItem::EbsSnapshot);
+                // Snapshots are incremental: the full volume size is an upper bound.
+                let (savings, basis) = input.savings(r, size * per_gb);
+                let mut f = base("ebs-snapshot-old", r)
+                    .evidence("age_days", age)
+                    .evidence("volume_size_gib", size)
+                    .evidence("upper_bound", basis == SavingsBasis::PublicPrice);
+                f.title = format!("EBS snapshot {} is {age} days old", r.display_name());
+                f.summary = format!(
+                    "Snapshot of a {size} GiB volume taken {age} days ago. Old snapshots are often forgotten backups."
+                );
+                f.how_to_fix = "Delete it if no retention policy requires it and no AMI uses it (EC2 → Snapshots → Delete), \
+                                or move it to the archive tier. Consider Amazon Data Lifecycle Manager to expire snapshots automatically."
+                    .into();
+                out.push(finish(f, savings, basis, Some(src)));
+            }
+            T::NatGateway if str_attr(r, "state") == Some("available") => {
+                if let Some(f) = idle_nat(input, r) {
+                    out.push(f);
+                }
+                if let Some(cost) = input
+                    .nat_processing_cost
+                    .get(&r.native_id)
+                    .or_else(|| input.nat_processing_cost.get(&r.arn))
+                    && *cost >= 50.0
+                {
+                    let mut f = Finding::new("nat-data-processing", FindingKind::Pattern, &r.arn);
+                    f.account_id = r.account_id.clone();
+                    f.region = r.region.clone();
+                    f.resources.push(subject(r));
+                    f.severity = Severity::from_amount(*cost);
+                    f.impact = Some(*cost);
+                    f = f.evidence("processing_cost_30d", (cost * 100.0).round() / 100.0);
+                    f.title = format!("High NAT data processing on {}", r.display_name());
+                    f.summary = format!(
+                        "NAT gateway data processing cost {:.2} USD in the last 30 days. Traffic to S3 or DynamoDB doesn't need to go through NAT.",
+                        cost
+                    );
+                    f.how_to_fix = "Add free gateway VPC endpoints for S3 and DynamoDB, and interface endpoints for heavily used \
+                                    AWS APIs (ECR, CloudWatch Logs). Check which instances send the most traffic with VPC Flow Logs."
+                        .into();
+                    out.push(f);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A NAT gateway is idle when CUR shows (almost) no bytes processed, or —
+/// without CUR — when nothing that could use it runs in its VPC.
+fn idle_nat(input: &RuleInput, r: &Resource) -> Option<Finding> {
+    let vpc = r.vpc_id()?;
+    let evidence = match input.nat_gb {
+        Some(gb) => {
+            let processed = gb
+                .get(&r.native_id)
+                .or_else(|| gb.get(&r.arn))
+                .copied()
+                .unwrap_or(0.0);
+            if processed > 1.0 {
+                return None;
+            }
+            (
+                "gb_processed_30d",
+                processed,
+                "Processed under 1 GB in the last 30 days.",
+            )
+        }
+        None => {
+            let compute: HashSet<T> = [
+                T::Ec2Instance,
+                T::LambdaFunction,
+                T::EcsService,
+                T::EksCluster,
+            ]
+            .into();
+            let running = input.resources.iter().any(|x| {
+                compute.contains(&x.resource_type)
+                    && x.vpc_id() == Some(vpc)
+                    && !matches!(str_attr(x, "state"), Some("stopped") | Some("stopping"))
+            });
+            if running {
+                return None;
+            }
+            (
+                "compute_in_vpc",
+                0.0,
+                "No running instances, functions or containers in its VPC.",
+            )
+        }
+    };
+    let (hourly, src) = input.prices.get(&r.region, &PriceItem::NatGatewayHour);
+    let (savings, basis) = input.savings(r, hourly * HOURS_PER_MONTH);
+    let mut f = base("nat-idle", r)
+        .evidence(evidence.0, evidence.1)
+        .evidence("vpc_id", vpc);
+    f.title = format!("Idle NAT gateway {}", r.display_name());
+    f.summary = format!(
+        "{} NAT gateways bill every hour even with no traffic.",
+        evidence.2
+    );
+    f.how_to_fix = "Confirm no private subnet route table needs it for outbound internet access, \
+                    then delete the NAT gateway and release its Elastic IP."
+        .into();
+    Some(finish(f, savings, basis, Some(src)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inventory::arn;
+    use crate::inventory::graph::resolve;
+    use crate::inventory::{Relation, RelationKind as K};
+    use serde_json::json;
+
+    const A: &str = "111111111111";
+    const R: &str = "us-east-1";
+
+    fn res(t: T, kind: &str, id: &str, attrs: serde_json::Value) -> Resource {
+        let mut r = Resource::new(t, arn::ec2(R, A, kind, id), A, R, id);
+        for (k, v) in attrs.as_object().unwrap() {
+            r.attrs.insert(k.clone(), v.clone());
+        }
+        r
+    }
+
+    fn run(
+        resources: &[Resource],
+        relations: &[Relation],
+        actual: &HashMap<String, f64>,
+        nat_gb: Option<&HashMap<String, f64>>,
+    ) -> Vec<Finding> {
+        let edges = resolve(resources, relations);
+        evaluate(&RuleInput {
+            resources,
+            edges: &edges,
+            prices: &PriceBook::default(),
+            actual_costs: actual,
+            nat_gb,
+            nat_processing_cost: &HashMap::new(),
+            snapshot_age_days: 90,
+            today: dates::parse("2026-10-14").unwrap(),
+        })
+    }
+
+    #[test]
+    fn unattached_ebs_volume_savings() {
+        // Acceptance: a seeded unattached volume yields the correct estimate.
+        let gp3 = res(
+            T::EbsVolume,
+            "volume",
+            "vol-1",
+            json!({"state": "available", "volume_type": "gp3", "size_gib": 500, "iops": 6000, "throughput_mibps": 250}),
+        );
+        let io1 = res(
+            T::EbsVolume,
+            "volume",
+            "vol-2",
+            json!({"state": "available", "volume_type": "io1", "size_gib": 100, "iops": 1000}),
+        );
+        let used = res(
+            T::EbsVolume,
+            "volume",
+            "vol-3",
+            json!({"state": "in-use", "volume_type": "gp3", "size_gib": 50}),
+        );
+        let findings = run(&[gp3, io1, used], &[], &HashMap::new(), None);
+        assert_eq!(findings.len(), 2);
+
+        let f = findings.iter().find(|f| f.id.ends_with("vol-1")).unwrap();
+        // 500 × 0.08 + 3000 extra IOPS × 0.005 + 125 extra MiB/s × 0.04 = 40 + 15 + 5
+        assert_eq!(f.monthly_savings, Some(60.0));
+        assert_eq!(f.savings_basis, Some(SavingsBasis::PublicPrice));
+        assert_eq!(f.severity, Severity::Medium);
+        let f = findings.iter().find(|f| f.id.ends_with("vol-2")).unwrap();
+        // 100 × 0.125 + 1000 × 0.065
+        assert_eq!(f.monthly_savings, Some(77.5));
+
+        // With CUR, the actual cost wins.
+        let vol = res(
+            T::EbsVolume,
+            "volume",
+            "vol-1",
+            json!({"state": "available", "volume_type": "gp3", "size_gib": 500}),
+        );
+        let actual = HashMap::from([("vol-1".to_owned(), 37.5)]);
+        let f = &run(&[vol], &[], &actual, None)[0];
+        assert_eq!(
+            (f.monthly_savings, f.savings_basis),
+            (Some(37.5), Some(SavingsBasis::Actual))
+        );
+    }
+
+    #[test]
+    fn other_waste_rules() {
+        let eip = res(
+            T::ElasticIp,
+            "elastic-ip",
+            "eipalloc-1",
+            json!({"associated": false}),
+        );
+        let lb = {
+            let mut r = Resource::new(
+                T::LoadBalancer,
+                "arn:aws:elasticloadbalancing:us-east-1:1:loadbalancer/app/old/1",
+                A,
+                R,
+                "old",
+            );
+            r.attrs.insert("state".into(), json!("active"));
+            r.attrs.insert("type".into(), json!("application"));
+            r
+        };
+        let tg = {
+            let mut r = Resource::new(
+                T::TargetGroup,
+                "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/old/2",
+                A,
+                R,
+                "old-tg",
+            );
+            r.attrs.insert("targets".into(), json!(0));
+            r
+        };
+        let stopped = res(
+            T::Ec2Instance,
+            "instance",
+            "i-1",
+            json!({"state": "stopped", "vpc_id": "vpc-1"}),
+        );
+        let vol = res(
+            T::EbsVolume,
+            "volume",
+            "vol-9",
+            json!({"state": "in-use", "volume_type": "gp2", "size_gib": 100}),
+        );
+        let snap_old = res(
+            T::EbsSnapshot,
+            "snapshot",
+            "snap-1",
+            json!({"size_gib": 20, "create_time": "2026-01-01T00:00:00Z"}),
+        );
+        let snap_new = res(
+            T::EbsSnapshot,
+            "snapshot",
+            "snap-2",
+            json!({"size_gib": 20, "create_time": "2026-10-01T00:00:00Z"}),
+        );
+        let nat = res(
+            T::NatGateway,
+            "natgateway",
+            "nat-1",
+            json!({"state": "available", "vpc_id": "vpc-1"}),
+        );
+        let relations = vec![
+            Relation::new(&lb.arn, &tg.arn, K::RoutesTo),
+            Relation::new(&stopped.arn, &vol.arn, K::Attached),
+        ];
+        let resources = vec![eip, lb, tg, stopped, vol, snap_old, snap_new, nat];
+        let findings = run(&resources, &relations, &HashMap::new(), None);
+        let by_rule = |rule: &str| {
+            findings
+                .iter()
+                .filter(|f| f.rule == rule)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(by_rule("eip-unassociated")[0].monthly_savings, Some(3.65));
+        assert_eq!(by_rule("elb-idle")[0].monthly_savings, Some(16.43));
+        let stopped = by_rule("ec2-stopped-with-ebs");
+        assert_eq!(stopped[0].monthly_savings, Some(10.0));
+        assert_eq!(stopped[0].resources.len(), 2);
+        assert_eq!(by_rule("ebs-snapshot-old").len(), 1);
+        assert_eq!(by_rule("ebs-snapshot-old")[0].monthly_savings, Some(1.0));
+        // The only instance in the VPC is stopped → NAT likely idle: 0.045 × 730.
+        assert_eq!(by_rule("nat-idle")[0].monthly_savings, Some(32.85));
+
+        // With CUR traffic data, a busy NAT is not idle.
+        let busy = HashMap::from([("nat-1".to_owned(), 250.0)]);
+        let findings = run(&resources, &relations, &HashMap::new(), Some(&busy));
+        assert!(findings.iter().all(|f| f.rule != "nat-idle"));
+    }
+}

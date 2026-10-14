@@ -122,6 +122,46 @@ export function SettingsView({ settings, onSaved }: Props) {
           </span>
         </label>
 
+        <h2>Findings</h2>
+        <label>
+          Anomaly sensitivity
+          <select
+            value={draft.anomaly_sensitivity}
+            onChange={(e) => setDraft({ ...draft, anomaly_sensitivity: e.target.value as Settings["anomaly_sensitivity"] })}
+          >
+            <option value="low">Low: only large spikes (4σ and $25/day above baseline)</option>
+            <option value="medium">Medium (3σ and $10/day)</option>
+            <option value="high">High: smaller changes (2σ and $5/day)</option>
+          </select>
+          <span className="hint">Daily spend per account and service is compared with its previous 28 days.</span>
+        </label>
+        <label>
+          Flag snapshots older than (days)
+          <input
+            type="number"
+            min={7}
+            max={3650}
+            value={draft.snapshot_age_days}
+            onChange={(e) => setDraft({ ...draft, snapshot_age_days: Number(e.target.value) })}
+          />
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.commitments_enabled}
+            onChange={(e) => setDraft({ ...draft, commitments_enabled: e.target.checked })}
+          />
+          Track Savings Plans and RI coverage (weekly, 4 Cost Explorer requests = $0.04)
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.import_aws_anomalies}
+            onChange={(e) => setDraft({ ...draft, import_aws_anomalies: e.target.checked })}
+          />
+          Import AWS Cost Anomaly Detection findings ($0.01 per sync)
+        </label>
+
         <h2>Costs</h2>
         <label>
           Cost allocation tag keys

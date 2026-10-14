@@ -32,20 +32,20 @@ pub struct ApiUsage {
 /// Facts visible in a workspace, de-duplicated: when several connected
 /// accounts report the same linked account (e.g. a management account and the
 /// member itself), only the source covering the most accounts is used.
-struct Facts {
-    sql: String,
-    params: Vec<Value>,
+pub(super) struct Facts {
+    pub sql: String,
+    pub params: Vec<Value>,
 }
 
-struct FactsSpec<'a> {
-    workspace_id: &'a str,
-    granularity: Granularity,
-    dimension: &'a Dimension,
-    start: &'a str,
-    end: &'a str,
-    linked_accounts: &'a [String],
-    keys: &'a [String],
-    source: Option<&'a str>,
+pub(super) struct FactsSpec<'a> {
+    pub workspace_id: &'a str,
+    pub granularity: Granularity,
+    pub dimension: &'a Dimension,
+    pub start: &'a str,
+    pub end: &'a str,
+    pub linked_accounts: &'a [String],
+    pub keys: &'a [String],
+    pub source: Option<&'a str>,
 }
 
 fn text(s: &str) -> Value {
@@ -57,7 +57,7 @@ fn placeholders(n: usize) -> String {
 }
 
 impl FactsSpec<'_> {
-    fn build(&self) -> Facts {
+    pub(super) fn build(&self) -> Facts {
         let mut params = vec![
             text(self.workspace_id),
             text(self.granularity.as_str()),

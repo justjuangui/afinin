@@ -52,6 +52,7 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
                     s(i.placement().and_then(|p| p.availability_zone())),
                 )
                 .attr("platform", s(i.platform_details()))
+                .attr("state_reason", s(i.state_transition_reason()))
                 .attr("launch_time", time(i.launch_time()));
             if let Some(subnet) = i.subnet_id() {
                 out.relate(&me, a("subnet", subnet), K::InNetwork);
@@ -92,6 +93,8 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
                 .attr("volume_type", s(v.volume_type().map(|x| x.as_str())))
                 .attr("size_gib", v.size().and_then(num))
                 .attr("iops", v.iops().and_then(num))
+                .attr("throughput_mibps", v.throughput().and_then(num))
+                .attr("snapshot_id", s(v.snapshot_id()))
                 .attr("availability_zone", s(v.availability_zone()))
                 .attr("attached_instances", Some(json!(attached)))
                 .attr("create_time", time(v.create_time()));
@@ -260,6 +263,36 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
             }
             for sg in n.groups().iter().filter_map(|g| g.group_id()) {
                 out.relate(&me, a("security-group", sg), K::SecuredBy);
+            }
+            out.resources.push(r);
+        }
+    }
+
+    // Snapshots owned by this account (FR-31: old snapshots).
+    for page in client
+        .describe_snapshots()
+        .owner_ids("self")
+        .into_paginator()
+        .send()
+        .try_collect()
+        .await
+        .map_err(aws_err)?
+    {
+        for snap in page.snapshots() {
+            let Some(id) = snap.snapshot_id() else {
+                continue;
+            };
+            let me = a("snapshot", id);
+            let mut r = Resource::new(T::EbsSnapshot, &me, acct, region, id);
+            r.with_tags(tags(snap.tags()))
+                .attr("state", s(snap.state().map(|x| x.as_str())))
+                .attr("size_gib", snap.volume_size().and_then(num))
+                .attr("volume_id", s(snap.volume_id()))
+                .attr("storage_tier", s(snap.storage_tier().map(|x| x.as_str())))
+                .attr("description", s(snap.description()))
+                .attr("create_time", time(snap.start_time()));
+            if let Some(vol) = snap.volume_id() {
+                out.relate(&me, a("volume", vol), K::Attached);
             }
             out.resources.push(r);
         }

@@ -13,7 +13,7 @@ use afinin_core::{
     AccountSyncReport, Application, Facet, Graph, GraphFilter, InventoryFacets, InventoryScan,
     Resource,
 };
-use afinin_core::{CurConfig, CurStatus, CurValidation};
+use afinin_core::{CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -400,6 +400,31 @@ async fn save_cur_template(app: AppHandle) -> CmdResult<bool> {
     Ok(true)
 }
 
+// ---- findings ----------------------------------------------------------------
+
+#[tauri::command]
+fn findings(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    include_hidden: bool,
+) -> CmdResult<Vec<Finding>> {
+    state.core()?.findings(&workspace_id, include_hidden)
+}
+
+#[tauri::command]
+fn set_finding_status(
+    state: State<'_, AppState>,
+    finding_id: String,
+    status: FindingStatus,
+) -> CmdResult<()> {
+    state.core()?.set_finding_status(&finding_id, &status)
+}
+
+#[tauri::command]
+fn insights(state: State<'_, AppState>, workspace_id: String) -> CmdResult<Insights> {
+    state.core()?.insights(&workspace_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -459,6 +484,9 @@ pub fn run() {
             cur_status,
             cur_setup_help,
             save_cur_template,
+            findings,
+            set_finding_status,
+            insights,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Afinín");

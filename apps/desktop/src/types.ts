@@ -160,6 +160,10 @@ export interface Settings {
   default_metric: CostMetric;
   inventory_enabled: boolean;
   inventory_regions: string[];
+  anomaly_sensitivity: "low" | "medium" | "high";
+  snapshot_age_days: number;
+  commitments_enabled: boolean;
+  import_aws_anomalies: boolean;
 }
 
 export interface ApiUsage {
@@ -269,4 +273,48 @@ export interface CurStatus {
   first_date: string | null;
   last_date: string | null;
   last_ingested_at: string | null;
+}
+
+export type Severity = "low" | "medium" | "high";
+export type FindingKind = "waste" | "anomaly" | "pattern";
+export type FindingStatus =
+  | { status: "open" }
+  | { status: "dismissed"; note: string | null }
+  | { status: "snoozed"; until: string };
+
+export interface Finding {
+  id: string;
+  rule: string;
+  kind: FindingKind;
+  severity: Severity;
+  title: string;
+  summary: string;
+  how_to_fix: string;
+  account_id: string;
+  region: string;
+  resources: { arn: string; label: string; resource_type: string | null }[];
+  monthly_savings: number | null;
+  savings_basis: "actual" | "public_price" | null;
+  impact: number | null;
+  evidence: Record<string, unknown>;
+  first_seen: string | null;
+  status: FindingStatus;
+}
+
+export interface CommitmentSummary {
+  kind: "savings_plans" | "reservations";
+  coverage_pct: number | null;
+  utilization_pct: number | null;
+  on_demand_cost: number | null;
+  unused_commitment: number | null;
+  start: string;
+  end: string;
+}
+
+export interface Insights {
+  top_movers: CostComparisonRow[];
+  data_transfer: { key: string; label: string; total: number }[];
+  data_transfer_total: number;
+  commitments: [string, CommitmentSummary][];
+  unit: string;
 }

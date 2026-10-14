@@ -164,6 +164,38 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX cur_daily_lookup ON cur_daily (usage_date, resource_id);
     "#,
+    // v5: findings (M4). Findings are computed on demand; only state is stored.
+    r#"
+    CREATE TABLE prices (
+        region      TEXT NOT NULL,
+        item        TEXT NOT NULL,
+        usd         DOUBLE NOT NULL,
+        fetched_at  TEXT NOT NULL,
+        PRIMARY KEY (region, item)
+    );
+    CREATE TABLE finding_state (
+        finding_id  TEXT PRIMARY KEY,
+        status      TEXT NOT NULL,       -- JSON FindingStatus
+        updated_at  TEXT NOT NULL
+    );
+    CREATE TABLE finding_seen (
+        finding_id  TEXT PRIMARY KEY,
+        first_seen  TEXT NOT NULL
+    );
+    CREATE TABLE commitments (
+        source_account  TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        summary         TEXT NOT NULL,   -- JSON CommitmentSummary
+        fetched_at      TEXT NOT NULL,
+        PRIMARY KEY (source_account, kind)
+    );
+    CREATE TABLE aws_anomalies (
+        source_account  TEXT NOT NULL,
+        anomaly_id      TEXT NOT NULL,
+        data            TEXT NOT NULL,   -- JSON AwsAnomaly
+        PRIMARY KEY (source_account, anomaly_id)
+    );
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -179,15 +211,19 @@ const ACCOUNT_DATA: &[(&str, &str)] = &[
     ("cur_configs", "account_id"),
     ("cur_periods", "source_account"),
     ("cur_daily", "source_account"),
+    ("commitments", "source_account"),
+    ("aws_anomalies", "source_account"),
 ];
 
 mod cost;
 mod cur;
+mod findings;
 mod inventory;
 mod settings;
 
 pub use cost::ApiUsage;
 pub use cur::CurStatus;
+pub use findings::PRICE_TTL_DAYS;
 pub use inventory::InventoryScan;
 
 pub struct Storage {

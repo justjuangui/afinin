@@ -365,3 +365,35 @@ pre.code { margin: 6px 0 0; padding: 10px 12px; background: var(--sidebar); bord
 .check-error .check-icon { background: var(--danger); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .modal > footer .spacer { flex: 1; }
+
+.kpi-unit { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.findings { display: flex; flex-direction: column; gap: 16px; }
+.findings-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .findings-layout { grid-template-columns: 1fr; } }
+.findings-list { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.finding-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.finding { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.finding.hidden-finding { opacity: 0.65; }
+.finding-head { width: 100%; display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; align-items: center; text-align: left; background: none; border: none; border-radius: 0; padding: 12px 14px; }
+.finding-head:hover { background: var(--sidebar); }
+.finding-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.finding-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finding-amount { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+.sev { font-size: 12px; font-weight: 600; display: inline-flex; gap: 4px; align-items: center; }
+.sev-high { color: var(--danger); }
+.sev-medium { color: var(--warn); }
+.sev-low { color: var(--muted); }
+.finding-body { padding: 4px 16px 14px 116px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
+.finding-body h4 { margin: 6px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.finding-actions { display: flex; gap: 8px; margin-top: 6px; }
+.plain { margin: 0; padding-left: 18px; font-size: 13px; }
+.evidence { margin: 0; display: grid; grid-template-columns: 160px 1fr; gap: 3px 12px; font-size: 12px; }
+.evidence .kv { display: contents; }
+.evidence dt { color: var(--muted); }
+.evidence dd { margin: 0; }
+.trends { display: flex; flex-direction: column; gap: 12px; }
+.trends .panel { padding: 14px 16px; gap: 6px; }
+table.compact td { padding: 5px 4px; font-size: 13px; }
+.clamp-cell { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trends table { table-layout: auto; }
+@media (max-width: 820px) { .finding-body { padding-left: 16px; } .finding-head { grid-template-columns: 70px 1fr; } .finding-amount { grid-column: 2; align-items: flex-start; } }

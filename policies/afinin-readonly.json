@@ -41,6 +41,7 @@
         "ec2:DescribeNatGateways",
         "ec2:DescribeAddresses",
         "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeSnapshots",
         "elasticloadbalancing:DescribeLoadBalancers",
         "elasticloadbalancing:DescribeTargetGroups",
         "elasticloadbalancing:DescribeTargetHealth",
@@ -74,6 +75,14 @@
       "Action": [
         "bcm-data-exports:ListExports",
         "bcm-data-exports:GetExport"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "PublicPrices",
+      "Effect": "Allow",
+      "Action": [
+        "pricing:GetProducts"
       ],
       "Resource": "*"
     }

@@ -37,6 +37,7 @@ dependencies = [
  "aws-sdk-elasticache",
  "aws-sdk-elasticloadbalancingv2",
  "aws-sdk-lambda",
+ "aws-sdk-pricing",
  "aws-sdk-rds",
  "aws-sdk-resourcegroupstagging",
  "aws-sdk-s3",
@@ -863,6 +864,30 @@ dependencies = [
  "aws-runtime",
  "aws-smithy-async",
  "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-pricing"
+version = "1.96.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "039aa3285babef35ec19471fce01e8d0b7634e08a05b8b101f30184a079d8c1a"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
  "aws-smithy-http",
  "aws-smithy-json",
  "aws-smithy-observability",

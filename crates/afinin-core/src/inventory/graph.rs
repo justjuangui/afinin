@@ -35,6 +35,7 @@ impl GraphFilter {
 
     fn matches(&self, r: &Resource) -> bool {
         (self.include_network || !r.resource_type.is_network_plumbing())
+            && (!r.resource_type.is_bulk() || self.types.contains(&r.resource_type))
             && (self.accounts.is_empty() || self.accounts.contains(&r.account_id))
             && (self.regions.is_empty() || self.regions.contains(&r.region))
             && (self.vpcs.is_empty()
@@ -287,7 +288,7 @@ pub fn applications(resources: &[Resource], tag_key: &str) -> Vec<Application> {
     let mut groups: BTreeMap<String, Application> = BTreeMap::new();
     for r in resources
         .iter()
-        .filter(|r| !r.resource_type.is_network_plumbing())
+        .filter(|r| !r.resource_type.is_network_plumbing() && !r.resource_type.is_bulk())
     {
         let value = r.tags.get(tag_key).cloned().unwrap_or_default();
         let app = groups.entry(value.clone()).or_insert_with(|| Application {

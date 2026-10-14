@@ -36,6 +36,7 @@ aws-sdk-sns = "1"
 aws-sdk-elasticache = "1"
 aws-sdk-resourcegroupstagging = "1"
 aws-sdk-bcmdataexports = "1"
+aws-sdk-pricing = "1"
 futures = "0.3"
 duckdb = { version = "1", features = ["bundled"] }
 keyring = "4"

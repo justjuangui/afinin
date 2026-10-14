@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cost::CostMetric;
 use crate::error::{Error, Result};
+use crate::findings::Sensitivity;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -24,6 +25,14 @@ pub struct Settings {
     pub inventory_enabled: bool,
     /// Regions to scan; empty means every region enabled in the account (FR-52).
     pub inventory_regions: Vec<String>,
+    /// Cost anomaly sensitivity (FR-30).
+    pub anomaly_sensitivity: Sensitivity,
+    /// Snapshots older than this are flagged (FR-31).
+    pub snapshot_age_days: u32,
+    /// Refresh Savings Plans / RI coverage weekly (4 Cost Explorer requests, $0.04).
+    pub commitments_enabled: bool,
+    /// Import AWS Cost Anomaly Detection findings on each sync ($0.01 per request).
+    pub import_aws_anomalies: bool,
 }
 
 impl Default for Settings {
@@ -36,6 +45,10 @@ impl Default for Settings {
             default_metric: CostMetric::Unblended,
             inventory_enabled: true,
             inventory_regions: Vec::new(),
+            anomaly_sensitivity: Sensitivity::Medium,
+            snapshot_age_days: 90,
+            commitments_enabled: true,
+            import_aws_anomalies: false,
         }
     }
 }
