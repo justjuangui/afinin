@@ -34,6 +34,7 @@ import type {
 } from "../types";
 import { MultiSelect } from "./MultiSelect";
 import { Callout } from "./Callout";
+import { NetworkGraph } from "./NetworkGraph";
 
 const SHORT: Record<string, string> = {
   "cloudfront:distribution": "CF",
@@ -94,6 +95,17 @@ function legendLabel(nodes: GraphNode[]): string {
 const COST_STEPS = 5;
 
 const FIT = { padding: 0.12, maxZoom: 1.1 };
+
+type Layout = "flow" | "network";
+const LAYOUT_KEY = "afinin.inventory.layout";
+
+function savedLayout(): Layout {
+  try {
+    return localStorage.getItem(LAYOUT_KEY) === "network" ? "network" : "flow";
+  } catch {
+    return "flow";
+  }
+}
 
 /** Tag value select option for "resources without this tag". */
 const UNTAGGED = "\u0000untagged";
@@ -183,6 +195,15 @@ export function InventoryView(props: Props) {
 
 function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onExplain, onScreen, nav }: Props) {
   const [mode, setMode] = useState<"graph" | "applications">("graph");
+  const [layoutKind, setLayoutKind] = useState<Layout>(savedLayout);
+  const chooseLayout = (l: Layout) => {
+    setLayoutKind(l);
+    try {
+      localStorage.setItem(LAYOUT_KEY, l);
+    } catch {
+      // Not remembered; the default comes back next time.
+    }
+  };
   const [filter, setFilter] = useState<GraphFilter>(EMPTY_FILTER);
   const [facets, setFacets] = useState<InventoryFacets | null>(null);
   const [tagValues, setTagValues] = useState<Facet[]>([]);
@@ -263,7 +284,8 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
 
   // Center after the graph's own re-fit (next frames), without touching state.
   useEffect(() => {
-    if (!centerOn) return;
+    // The network view centers itself.
+    if (!centerOn || layoutKind !== "flow") return;
     const p = positions.get(centerOn.arn);
     if (!p) return;
     let inner = 0;
@@ -274,12 +296,22 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
       cancelAnimationFrame(outer);
       cancelAnimationFrame(inner);
     };
-  }, [centerOn, positions, flow]);
+  }, [centerOn, positions, flow, layoutKind]);
 
   useEffect(() => {
     const names = (options: Facet[] | undefined, keys: string[]) =>
       keys.map((k) => options?.find((o) => o.key === k)?.label ?? k).join(", ");
-    const details: ContextEntry[] = [{ key: "mode", meaning: mode === "graph" ? "resource graph" : "applications by tag" }];
+    const details: ContextEntry[] = [
+      {
+        key: "mode",
+        meaning:
+          mode === "applications"
+            ? "applications by tag"
+            : layoutKind === "network"
+              ? "resource graph, network layout (clusters of connected resources)"
+              : "resource graph, flow layout (left to right by role)",
+      },
+    ];
     if (filter.accounts.length) details.push({ key: "only accounts", meaning: names(facets?.accounts, filter.accounts) });
     if (filter.regions.length) details.push({ key: "only regions", meaning: filter.regions.join(", ") });
     if (filter.vpcs.length) details.push({ key: "only VPCs", meaning: filter.vpcs.join(", ") });
@@ -298,7 +330,7 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
     const node = selected ? graph?.nodes.find((n) => n.id === selected) : undefined;
     if (node) details.push({ key: "selected resource", meaning: `${node.label} (${node.resource_type}) ${node.id}` });
     onScreen(details);
-  }, [mode, filter, facets, graph, selected, onScreen]);
+  }, [mode, layoutKind, filter, facets, graph, selected, onScreen]);
 
   // Re-fit whenever the filtered graph changes, not only on first render.
   useEffect(() => {
@@ -361,9 +393,8 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
   );
 
   const focus = (id: string) => {
-    const p = positions.get(id);
     setSelected(id);
-    if (p) void flow.setCenter(p.x + NODE_W / 2, p.y + NODE_H / 2, { zoom: 1.1, duration: 300 });
+    setCenterOn({ arn: id });
   };
 
   const nextMatch = () => {
@@ -421,6 +452,24 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
             Applications
           </button>
         </div>
+        {mode === "graph" && (
+          <div className="segmented" role="group" aria-label="Graph layout">
+            <button
+              className={layoutKind === "flow" ? "active" : ""}
+              onClick={() => chooseLayout("flow")}
+              title="Left to right by role: edge, load balancers, compute, data…"
+            >
+              Flow
+            </button>
+            <button
+              className={layoutKind === "network" ? "active" : ""}
+              onClick={() => chooseLayout("network")}
+              title="Connected resources cluster together; size and color follow cost"
+            >
+              Network
+            </button>
+          </div>
+        )}
         {mode === "graph" && facets && (
           <>
             <MultiSelect label="Accounts" options={facets.accounts} selected={filter.accounts} onChange={(accounts) => set({ accounts })} />
@@ -537,33 +586,45 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
       ) : (
         <div className="graph-area">
           <div className="graph-canvas">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onNodeClick={(_, n) => setSelected(n.id)}
-              onPaneClick={() => setSelected(null)}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              onlyRenderVisibleElements
-              minZoom={0.05}
-              fitView
-              fitViewOptions={FIT}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={24} size={1} color="var(--chart-grid)" />
-              <Controls showInteractive={false} />
-              {graph && graph.nodes.length > 60 && (
-                <MiniMap
-                  pannable
-                  zoomable
-                  className="minimap"
-                  nodeStrokeWidth={0}
-                  nodeColor="var(--edge)"
-                  maskColor="var(--minimap-mask)"
-                />
-              )}
-            </ReactFlow>
+            {layoutKind === "network" && graph ? (
+              <NetworkGraph
+                graph={graph}
+                short={SHORT}
+                selected={selected}
+                onSelect={setSelected}
+                matches={matches}
+                steps={steps}
+                centerOn={centerOn}
+              />
+            ) : (
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                onNodeClick={(_, n) => setSelected(n.id)}
+                onPaneClick={() => setSelected(null)}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                onlyRenderVisibleElements
+                minZoom={0.05}
+                fitView
+                fitViewOptions={FIT}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background gap={24} size={1} color="var(--chart-grid)" />
+                <Controls showInteractive={false} />
+                {graph && graph.nodes.length > 60 && (
+                  <MiniMap
+                    pannable
+                    zoomable
+                    className="minimap"
+                    nodeStrokeWidth={0}
+                    nodeColor="var(--edge)"
+                    maskColor="var(--minimap-mask)"
+                  />
+                )}
+              </ReactFlow>
+            )}
             {overlay && graph && graph.nodes.some((n) => n.cost !== null) && (
               <div className="legend-overlay">
                 <span>{legendLabel(graph.nodes)}</span>
