@@ -379,6 +379,26 @@ export interface WorkspaceContext {
   instructions: string;
 }
 
+/** What the user is looking at, sent with each question. */
+export interface ScreenContext {
+  view: string;
+  details: ContextEntry[];
+}
+
+/** A place in the app an assistant answer can open. `end` is exclusive. */
+export type NavTarget =
+  | {
+      view: "costs";
+      start: string;
+      end: string;
+      groupBy: GroupBy;
+      metric: CostMetric | null;
+      accounts: string[];
+      services: string[];
+      compare: boolean;
+    }
+  | { view: "inventory"; arn: string };
+
 export interface StoredContext {
   context: WorkspaceContext;
   revision: number;

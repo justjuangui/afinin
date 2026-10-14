@@ -16,7 +16,7 @@ use afinin_core::{
 };
 use afinin_core::{
     ContextRevision, CurConfig, CurStatus, CurValidation, Finding, FindingStatus, Insights,
-    LlmLogEntry, StoredContext, Turn, WorkspaceContext,
+    LlmLogEntry, ScreenContext, StoredContext, Turn, WorkspaceContext,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -440,6 +440,7 @@ async fn ask(
     workspace_id: String,
     conversation_id: Option<String>,
     question: String,
+    screen: Option<ScreenContext>,
 ) -> CmdResult<Turn> {
     let progress = |p: Progress| {
         let mut payload = serde_json::to_value(&p).unwrap_or_default();
@@ -452,6 +453,7 @@ async fn ask(
             &workspace_id,
             conversation_id.as_deref(),
             &question,
+            screen.as_ref(),
             &progress,
         )
         .await

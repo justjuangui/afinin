@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
-import { PRESETS, presetRange, previousRange, todayUtc, type DateRange } from "../dates";
+import { PRESETS, addDays, daysBetween, presetRange, previousRange, todayUtc, type DateRange } from "../dates";
 import { money, percent } from "../format";
 import type {
+  ContextEntry,
   CostComparisonRow,
   CostMetric,
   CostOverview,
@@ -13,6 +14,7 @@ import type {
   DimensionValue,
   Granularity,
   GroupBy,
+  NavTarget,
   Settings,
 } from "../types";
 import { CostChart, type ChartSeries } from "./CostChart";
@@ -71,9 +73,13 @@ interface Props {
   onSync: () => void;
   /** CUR data is loaded, enabling per-resource breakdowns. */
   curAvailable: boolean;
+  /** Reports what the dashboard shows, for the assistant. */
+  onScreen: (details: ContextEntry[]) => void;
+  /** A view to apply, from an assistant answer. */
+  nav: { target: NavTarget; key: number } | null;
 }
 
-export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onSync, curAvailable }: Props) {
+export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onSync, curAvailable, onScreen, nav }: Props) {
   const [range, setRange] = useState<DateRange>(() => presetRange("mtd"));
   const [metric, setMetric] = useState<CostMetric>(settings.default_metric);
   const [groupBy, setGroupBy] = useState<GroupBy>({ kind: "service" });
@@ -105,6 +111,35 @@ export function CostDashboard({ workspaceId, settings, dataVersion, syncing, onS
     [workspaceId, range, metric, groupBy, accounts, services, serviceFilterAvailable],
   );
   const prev = useMemo(() => previousRange(range), [range]);
+
+  // Apply each navigation from an assistant answer once, during render.
+  const [appliedNav, setAppliedNav] = useState<number | null>(null);
+  if (nav && nav.target.view === "costs" && nav.key !== appliedNav) {
+    const t = nav.target;
+    setAppliedNav(nav.key);
+    setRange({ preset: "custom", start: t.start, end: t.end, granularity: daysBetween(t.start, t.end) > 62 ? "monthly" : "daily" });
+    setGroupBy(t.groupBy);
+    if (t.metric) setMetric(t.metric);
+    setAccounts(t.accounts);
+    setServices(t.services);
+    setCompare(t.compare);
+  }
+
+  useEffect(() => {
+    const labels = (options: DimensionValue[], keys: string[]) =>
+      keys.map((k) => options.find((o) => o.key === k)?.label ?? k).join(", ");
+    const preset = PRESETS.find((p) => p.id === range.preset)?.label;
+    const details: ContextEntry[] = [
+      { key: "period", meaning: `${range.start} to ${addDays(range.end, -1)}${preset ? ` (${preset.toLowerCase()})` : ""}` },
+      { key: "granularity", meaning: range.granularity },
+      { key: "metric", meaning: metric.replace("_", " ") },
+      { key: "group by", meaning: groupBy.kind === "tag" ? `tag ${groupBy.key}` : groupBy.kind.replace("_", " ") },
+    ];
+    if (accounts.length) details.push({ key: "only accounts", meaning: labels(accountOptions, accounts) });
+    if (serviceFilterAvailable && services.length) details.push({ key: "only services", meaning: labels(serviceOptions, services) });
+    if (compare) details.push({ key: "compared with", meaning: `${prev.start} to ${addDays(prev.end, -1)}` });
+    onScreen(details);
+  }, [range, metric, groupBy, accounts, services, compare, prev, accountOptions, serviceOptions, serviceFilterAvailable, onScreen]);
 
   useEffect(() => {
     let cancelled = false;

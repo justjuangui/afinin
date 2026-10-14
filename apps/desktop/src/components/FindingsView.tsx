@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { addDays, todayUtc } from "../dates";
 import { money, percent } from "../format";
-import type { Finding, FindingKind, Insights, Severity } from "../types";
+import type { ContextEntry, Finding, FindingKind, Insights, Severity } from "../types";
 import { Callout } from "./Callout";
 
 const SEVERITY: Record<Severity, { label: string; icon: string }> = {
@@ -24,9 +24,11 @@ interface Props {
   workspaceId: string;
   dataVersion: number;
   onExplain: (prompt: string) => void;
+  /** Reports what the list shows, for the assistant. */
+  onScreen: (details: ContextEntry[]) => void;
 }
 
-export function FindingsView({ workspaceId, dataVersion, onExplain }: Props) {
+export function FindingsView({ workspaceId, dataVersion, onExplain, onScreen }: Props) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [insights, setInsights] = useState<Insights | null>(null);
   const [kind, setKind] = useState<FindingKind | "all">("all");
@@ -56,6 +58,13 @@ export function FindingsView({ workspaceId, dataVersion, onExplain }: Props) {
   const estimated = open.some((f) => f.savings_basis === "public_price");
   const anomalies = open.filter((f) => f.kind === "anomaly");
   const unit = insights?.unit ?? "USD";
+
+  useEffect(() => {
+    onScreen([
+      { key: "showing", meaning: KINDS.find((k) => k.id === kind)?.label ?? kind },
+      { key: "dismissed and snoozed", meaning: showHidden ? "included" : "hidden" },
+    ]);
+  }, [kind, showHidden, onScreen]);
 
   const setStatus = async (f: Finding, status: Finding["status"]) => {
     try {

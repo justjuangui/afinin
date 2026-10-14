@@ -30,6 +30,7 @@ import type {
   InventoryFacets,
   InventoryScan,
   LlmLogEntry,
+  ScreenContext,
   Settings,
   SsoLoginPrompt,
   SsoLoginStatus,
@@ -100,8 +101,8 @@ export const api = {
   setFindingStatus: (findingId: string, status: FindingStatus) =>
     invoke<void>("set_finding_status", { findingId, status }),
   insights: (workspaceId: string) => invoke<Insights>("insights", { workspaceId }),
-  ask: (workspaceId: string, conversationId: string | null, question: string) =>
-    invoke<Turn>("ask", { workspaceId, conversationId, question }),
+  ask: (workspaceId: string, conversationId: string | null, question: string, screen: ScreenContext | null) =>
+    invoke<Turn>("ask", { workspaceId, conversationId, question, screen }),
   setLlmApiKey: (key: string | null) => invoke<void>("set_llm_api_key", { key }),
   hasLlmApiKey: () => invoke<boolean>("has_llm_api_key"),
   llmLog: (workspaceId: string) => invoke<LlmLogEntry[]>("llm_log", { workspaceId }),
