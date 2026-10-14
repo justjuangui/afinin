@@ -18,6 +18,8 @@ pub enum ProfileKind {
     Sso,
     /// `role_arn` + `source_profile` / `credential_source` chain.
     AssumeRole,
+    /// `aws login` console session (`login_session`) — short-lived, like SSO.
+    Login,
     /// `credential_process` helper.
     CredentialProcess,
     /// `web_identity_token_file`.
@@ -226,6 +228,8 @@ fn build_profile(
         ProfileKind::WebIdentity
     } else if sso.is_some() {
         ProfileKind::Sso
+    } else if s.contains_key("login_session") {
+        ProfileKind::Login
     } else if s.contains_key("credential_process") {
         ProfileKind::CredentialProcess
     } else if s.contains_key("aws_access_key_id") {
@@ -274,6 +278,10 @@ s3 =
 [profile audit]
 role_arn = arn:aws:iam::333333333333:role/AfininReadOnly
 source_profile = prod
+
+[profile console]
+login_session = arn:aws:iam::444444444444:user/admin
+region = us-east-1
 "#;
 
     const CREDENTIALS: &str = r#"
@@ -289,7 +297,7 @@ aws_secret_access_key = secret
     #[test]
     fn parses_all_profile_kinds() {
         let ps = parse_profiles(CONFIG, CREDENTIALS).unwrap();
-        assert_eq!(ps.len(), 4);
+        assert_eq!(ps.len(), 5);
 
         let default = by_name(&ps, "default");
         assert_eq!(default.kind, ProfileKind::StaticKeys);
@@ -311,6 +319,8 @@ aws_secret_access_key = secret
         let audit = by_name(&ps, "audit");
         assert_eq!(audit.kind, ProfileKind::AssumeRole);
         assert_eq!(audit.source_profile.as_deref(), Some("prod"));
+
+        assert_eq!(by_name(&ps, "console").kind, ProfileKind::Login);
     }
 
     #[test]

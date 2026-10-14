@@ -14,7 +14,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-config = { version = "1", features = ["behavior-version-latest", "credentials-login"] }
 aws-credential-types = "1"
 aws-sdk-sso = "1"
 aws-sdk-ssooidc = "1"

@@ -3,6 +3,7 @@
 
 export type ProfileKind =
   | "sso"
+  | "login"
   | "assume_role"
   | "credential_process"
   | "web_identity"

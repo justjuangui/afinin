@@ -483,6 +483,7 @@ impl Storage {
 fn kind_to_str(kind: ProfileKind) -> &'static str {
     match kind {
         ProfileKind::Sso => "sso",
+        ProfileKind::Login => "login",
         ProfileKind::AssumeRole => "assume_role",
         ProfileKind::CredentialProcess => "credential_process",
         ProfileKind::WebIdentity => "web_identity",
@@ -494,6 +495,7 @@ fn kind_to_str(kind: ProfileKind) -> &'static str {
 fn kind_from_str(s: &str) -> ProfileKind {
     match s {
         "sso" => ProfileKind::Sso,
+        "login" => ProfileKind::Login,
         "assume_role" => ProfileKind::AssumeRole,
         "credential_process" => ProfileKind::CredentialProcess,
         "web_identity" => ProfileKind::WebIdentity,
