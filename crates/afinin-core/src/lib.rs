@@ -508,17 +508,21 @@ impl Afinin {
     pub fn applications(&self, workspace_id: &str, tag_key: &str) -> Result<Vec<Application>> {
         let (resources, _) = self.db().workspace_inventory(workspace_id)?;
         let mut apps = inventory::graph::applications(&resources, tag_key);
-        if self.settings()?.cost_tag_keys.iter().any(|k| k == tag_key) {
+        let settings = self.settings()?;
+        if settings.cost_tag_keys.iter().any(|k| k == tag_key) {
             let today = cost::dates::today_utc();
-            let series = self.db().cost_series(&CostQuery {
+            // Build the query before locking: `self.settings()` inside the
+            // `self.db()` call would lock the database twice and deadlock.
+            let query = CostQuery {
                 workspace_id: workspace_id.to_owned(),
                 start: cost::dates::format(cost::dates::add_days(today, -30)),
                 end: cost::dates::format(today),
                 granularity: Granularity::Daily,
-                metric: self.settings()?.default_metric,
+                metric: settings.default_metric,
                 group_by: GroupBy::Tag(tag_key.to_owned()),
                 filter: CostFilter::default(),
-            })?;
+            };
+            let series = self.db().cost_series(&query)?;
             for app in &mut apps {
                 app.cost = Some(
                     series
@@ -1413,6 +1417,23 @@ mod tests {
             AwsFiles::from_env(),
         );
         (afinin, ws.id)
+    }
+
+    #[test]
+    fn applications_by_cost_tag_do_not_deadlock() {
+        let (afinin, ws) = afinin_with_unattached_volume();
+        let mut settings = afinin.settings().unwrap();
+        settings.cost_tag_keys = vec!["customer".into()];
+        afinin.save_settings(&settings).unwrap();
+        // A re-entrant lock used to hang here; fail instead of hanging the suite.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(afinin.applications(&ws, "customer").map(|a| a.len()));
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("applications() did not return: database lock taken twice");
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]
