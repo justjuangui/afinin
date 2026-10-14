@@ -28,6 +28,25 @@ pub struct Account {
     pub aws_account_id: Option<String>,
     pub last_test: Option<ConnectionTest>,
     pub created_at: String,
+    /// Latest data sync (FR-50).
+    pub sync: Option<SyncStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncState {
+    Running,
+    Ok,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncStatus {
+    pub state: SyncState,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub last_success_at: Option<String>,
+    pub error: Option<String>,
 }
 
 /// Result of a "Test connection" check (FR-3).

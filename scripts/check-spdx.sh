@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 
 missing=0
 while IFS= read -r file; do
+  [[ -f "$file" ]] || continue
   if ! head -n 3 "$file" | grep -q "SPDX-License-Identifier: MIT OR Apache-2.0"; then
     echo "missing SPDX header: $file"
     missing=1

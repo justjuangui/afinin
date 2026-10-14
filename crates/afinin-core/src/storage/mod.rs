@@ -8,7 +8,7 @@ use std::path::Path;
 use duckdb::{Connection, OptionalExt, params};
 
 use crate::error::{Error, Result};
-use crate::model::{Account, ConnectionTest, Workspace, now_rfc3339};
+use crate::model::{Account, ConnectionTest, SyncState, SyncStatus, Workspace, now_rfc3339};
 use crate::profiles::ProfileKind;
 
 /// Keychain entry holding the database encryption key.
@@ -39,7 +39,79 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE (workspace_id, profile)
     );
     "#,
+    // v2: Cost Explorer data (M1). Dates are `YYYY-MM-DD` text.
+    r#"
+    CREATE TABLE cost_facts (
+        source_account  TEXT NOT NULL,   -- accounts.id that fetched the data
+        granularity     TEXT NOT NULL,   -- DAILY | MONTHLY
+        dimension       TEXT NOT NULL,   -- SERVICE | REGION | USAGE_TYPE | TAG:<key>
+        period_start    TEXT NOT NULL,
+        linked_account  TEXT NOT NULL,
+        key             TEXT NOT NULL,
+        unblended       DOUBLE NOT NULL,
+        amortized       DOUBLE NOT NULL,
+        net_unblended   DOUBLE NOT NULL,
+        unit            TEXT NOT NULL,
+        estimated       BOOLEAN NOT NULL
+    );
+    CREATE INDEX cost_facts_lookup ON cost_facts (dimension, granularity, period_start);
+    CREATE TABLE linked_accounts (
+        source_account     TEXT NOT NULL,
+        linked_account_id  TEXT NOT NULL,
+        name               TEXT,
+        PRIMARY KEY (source_account, linked_account_id)
+    );
+    CREATE TABLE cost_sync_state (
+        source_account  TEXT NOT NULL,
+        dimension       TEXT NOT NULL,
+        daily_from      TEXT NOT NULL,
+        daily_through   TEXT NOT NULL,   -- exclusive
+        PRIMARY KEY (source_account, dimension)
+    );
+    CREATE TABLE cost_forecasts (
+        source_account  TEXT NOT NULL,
+        metric          TEXT NOT NULL,
+        period_start    TEXT NOT NULL,
+        period_end      TEXT NOT NULL,
+        amount          DOUBLE NOT NULL,
+        unit            TEXT NOT NULL,
+        PRIMARY KEY (source_account, metric)
+    );
+    CREATE TABLE account_sync (
+        account_id       TEXT PRIMARY KEY,
+        state            TEXT NOT NULL,  -- running | ok | error
+        started_at       TEXT NOT NULL,
+        finished_at      TEXT,
+        last_success_at  TEXT,
+        error            TEXT
+    );
+    CREATE TABLE api_calls (
+        called_at   TEXT NOT NULL,
+        account_id  TEXT NOT NULL,
+        service     TEXT NOT NULL,
+        operation   TEXT NOT NULL,
+        cost_usd    DOUBLE NOT NULL
+    );
+    CREATE TABLE settings (
+        key    TEXT PRIMARY KEY,
+        value  TEXT NOT NULL
+    );
+    "#,
 ];
+
+/// Tables holding per-account data, purged when an account is removed.
+const ACCOUNT_DATA: &[(&str, &str)] = &[
+    ("cost_facts", "source_account"),
+    ("linked_accounts", "source_account"),
+    ("cost_sync_state", "source_account"),
+    ("cost_forecasts", "source_account"),
+    ("account_sync", "account_id"),
+];
+
+mod cost;
+mod settings;
+
+pub use cost::ApiUsage;
 
 pub struct Storage {
     conn: Connection,
@@ -146,6 +218,14 @@ impl Storage {
     /// Deletes a workspace and all its accounts.
     pub fn delete_workspace(&self, id: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+        for (table, column) in ACCOUNT_DATA {
+            tx.execute(
+                &format!(
+                    "DELETE FROM {table} WHERE {column} IN (SELECT id FROM accounts WHERE workspace_id = ?)"
+                ),
+                params![id],
+            )?;
+        }
         tx.execute("DELETE FROM accounts WHERE workspace_id = ?", params![id])?;
         let n = tx.execute("DELETE FROM workspaces WHERE id = ?", params![id])?;
         if n == 0 {
@@ -181,6 +261,7 @@ impl Storage {
             aws_account_id: None,
             last_test: None,
             created_at: now_rfc3339(),
+            sync: None,
         };
         self.conn.execute(
             "INSERT INTO accounts (id, workspace_id, name, profile, kind, created_at)
@@ -199,9 +280,10 @@ impl Storage {
 
     pub fn list_accounts(&self, workspace_id: Option<&str>) -> Result<Vec<Account>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, workspace_id, name, profile, kind, aws_account_id,
-                    test_ok, tested_at, test_arn, test_error, created_at
-             FROM accounts
+            "SELECT a.id, workspace_id, name, profile, kind, aws_account_id,
+                    test_ok, tested_at, test_arn, test_error, created_at,
+                    s.state, s.started_at, s.finished_at, s.last_success_at, s.error
+             FROM accounts a LEFT JOIN account_sync s ON s.account_id = a.id
              WHERE ?1 IS NULL OR workspace_id = ?1
              ORDER BY name",
         )?;
@@ -212,9 +294,11 @@ impl Storage {
     pub fn get_account(&self, id: &str) -> Result<Account> {
         self.conn
             .query_row(
-                "SELECT id, workspace_id, name, profile, kind, aws_account_id,
-                        test_ok, tested_at, test_arn, test_error, created_at
-                 FROM accounts WHERE id = ?",
+                "SELECT a.id, workspace_id, name, profile, kind, aws_account_id,
+                        test_ok, tested_at, test_arn, test_error, created_at,
+                        s.state, s.started_at, s.finished_at, s.last_success_at, s.error
+                 FROM accounts a LEFT JOIN account_sync s ON s.account_id = a.id
+                 WHERE a.id = ?",
                 params![id],
                 row_to_account,
             )
@@ -222,13 +306,20 @@ impl Storage {
             .ok_or_else(|| Error::NotFound(format!("account {id}")))
     }
 
+    /// Removes an account and all data fetched through it.
     pub fn remove_account(&self, id: &str) -> Result<()> {
-        let n = self
-            .conn
-            .execute("DELETE FROM accounts WHERE id = ?", params![id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        for (table, column) in ACCOUNT_DATA {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE {column} = ?"),
+                params![id],
+            )?;
+        }
+        let n = tx.execute("DELETE FROM accounts WHERE id = ?", params![id])?;
         if n == 0 {
             return Err(Error::NotFound(format!("account {id}")));
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -297,6 +388,20 @@ fn row_to_account(r: &duckdb::Row<'_>) -> duckdb::Result<Account> {
         aws_account_id,
         last_test,
         created_at: r.get(10)?,
+        sync: match r.get::<_, Option<String>>(11)? {
+            Some(state) => Some(SyncStatus {
+                state: match state.as_str() {
+                    "running" => SyncState::Running,
+                    "ok" => SyncState::Ok,
+                    _ => SyncState::Error,
+                },
+                started_at: r.get(12)?,
+                finished_at: r.get(13)?,
+                last_success_at: r.get(14)?,
+                error: r.get(15)?,
+            }),
+            None => None,
+        },
     })
 }
 

@@ -14,6 +14,7 @@ export READONLY_PATTERN="^[[:space:]]*[.](${verbs})_[a-z0-9_]*[(][)]"
 
 status=0
 while IFS= read -r file; do
+  [[ -f "$file" ]] || continue  # deleted but not yet staged
   awk -v file="$file" '
     $0 ~ ENVIRON["READONLY_PATTERN"] && prev !~ /readonly-allow:/ {
       printf "%s:%d: possible AWS write call: %s\n", file, NR, $0
