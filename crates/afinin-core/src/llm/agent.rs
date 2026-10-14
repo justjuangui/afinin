@@ -2,7 +2,7 @@
 
 //! The tool-use loop for one chat turn.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::context::AWS_BILLING_NOTES;
@@ -22,7 +22,7 @@ pub struct Conversation {
 }
 
 /// A tool call the answer can cite as `[n]` (FR-46). Stored unmasked for the UI.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Citation {
     pub n: usize,
     pub tool: String,
@@ -31,7 +31,7 @@ pub struct Citation {
     pub ok: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
     pub conversation_id: String,
     /// Answer with identifiers restored.
@@ -51,7 +51,14 @@ pub struct Turn {
     pub context_revision: i64,
     /// Figures in the answer that match nothing in the data, the question
     /// or the workspace context.
+    #[serde(default)]
     pub unverified_figures: Vec<String>,
+    /// Saved turn, for ratings (None if saving failed).
+    #[serde(default)]
+    pub turn_id: Option<i64>,
+    /// Last successful sync of the workspace when the answer was given.
+    #[serde(default)]
+    pub data_as_of: Option<String>,
 }
 
 /// What the agent is doing, for progress display.
@@ -205,6 +212,8 @@ pub async fn run_turn(
                 assumptions: Vec::new(),
                 context_revision: 0,
                 unverified_figures: Vec::new(),
+                turn_id: None,
+                data_as_of: None,
             });
         }
 
@@ -260,6 +269,8 @@ pub async fn run_turn(
         assumptions: Vec::new(),
         context_revision: 0,
         unverified_figures: Vec::new(),
+        turn_id: None,
+        data_as_of: None,
     })
 }
 

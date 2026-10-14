@@ -42,7 +42,10 @@ pub use profiles::{AwsFiles, AwsProfile, ProfileKind};
 pub use secrets::{KeychainStore, MemoryStore, SecretStore};
 pub use settings::Settings;
 pub use sso::{SsoLoginPrompt, SsoLoginStatus};
-pub use storage::{ApiUsage, ContextRevision, CurStatus, InventoryScan, LlmLogEntry, Storage};
+pub use storage::{
+    ApiUsage, ContextRevision, ConversationSummary, CurStatus, InventoryScan, LlmLogEntry, Rating,
+    Storage, StoredTurn,
+};
 
 /// Where Afinín keeps its local data.
 #[derive(Debug, Clone)]
@@ -74,7 +77,8 @@ pub struct Afinin {
     syncing: Mutex<HashSet<String>>,
     /// Scratch space for CUR downloads (deleted right after loading).
     tmp_dir: PathBuf,
-    /// Assistant conversations, in memory only (the request log is persisted).
+    /// Assistant conversations in use. Answers are saved; a conversation not
+    /// in memory (e.g. after a restart) is rebuilt from them.
     conversations: Mutex<HashMap<String, llm::agent::Conversation>>,
 }
 
@@ -1043,16 +1047,23 @@ impl Afinin {
         });
         let mut conv = match existing {
             Some(c) => c,
-            None => llm::agent::Conversation {
-                id: uuid::Uuid::new_v4().to_string(),
-                messages: Vec::new(),
-                redactor: llm::redact::Redactor::new(
-                    cfg.redaction_enabled(),
-                    self.redaction_names(workspace_id)?,
-                ),
-                citations: Vec::new(),
-            },
+            None => {
+                let mut conv = llm::agent::Conversation {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    messages: Vec::new(),
+                    redactor: llm::redact::Redactor::new(
+                        cfg.redaction_enabled(),
+                        self.redaction_names(workspace_id)?,
+                    ),
+                    citations: Vec::new(),
+                };
+                if let Some(id) = conversation_id {
+                    self.resume_conversation(&mut conv, workspace_id, id)?;
+                }
+                conv
+            }
         };
+        let started = std::time::Instant::now();
         let tools = llm::tools::specs();
         let today = cost::dates::format(cost::dates::today_utc());
         let default_metric = serde_json::to_value(self.settings()?.default_metric)
@@ -1109,6 +1120,17 @@ impl Afinin {
                 conv.citations.iter().map(|c| &c.result).collect();
             turn.unverified_figures =
                 llm::grounding::unverified(&turn.answer, &results, &[question, &plain_context]);
+            turn.data_as_of = self.data_as_of(workspace_id);
+            // A failed save must not lose the answer; it just can't be rated.
+            turn.turn_id = self
+                .db()
+                .save_assistant_turn(
+                    workspace_id,
+                    question,
+                    &turn,
+                    started.elapsed().as_millis() as u64,
+                )
+                .ok();
             turn
         });
         self.conversations
@@ -1116,6 +1138,67 @@ impl Afinin {
             .unwrap_or_else(|e| e.into_inner())
             .insert(conv.id.clone(), conv);
         result
+    }
+
+    /// Rebuilds a saved conversation as plain question/answer history (tool
+    /// details are not replayed) so it can continue after a restart.
+    fn resume_conversation(
+        &self,
+        conv: &mut llm::agent::Conversation,
+        workspace_id: &str,
+        id: &str,
+    ) -> Result<()> {
+        if self.db().assistant_conversation_workspace(id)?.as_deref() != Some(workspace_id) {
+            return Err(Error::NotFound(format!("conversation {id}")));
+        }
+        conv.id = id.to_owned();
+        for saved in self.db().assistant_turns(id)? {
+            let question = conv.redactor.mask(&saved.question);
+            let answer = conv.redactor.mask(&saved.turn.answer);
+            conv.messages.push(llm::Message::user_text(question));
+            conv.messages.push(llm::Message {
+                role: llm::Role::Assistant,
+                blocks: vec![llm::Block::Text(answer)],
+            });
+            // Keep source numbers increasing across the whole conversation.
+            conv.citations.extend(saved.turn.citations);
+        }
+        Ok(())
+    }
+
+    /// Latest successful sync among the workspace's accounts.
+    fn data_as_of(&self, workspace_id: &str) -> Option<String> {
+        self.db()
+            .list_accounts(Some(workspace_id))
+            .ok()?
+            .into_iter()
+            .filter_map(|a| a.sync.and_then(|s| s.last_success_at))
+            .max()
+    }
+
+    pub fn assistant_conversations(&self, workspace_id: &str) -> Result<Vec<ConversationSummary>> {
+        self.db().assistant_conversations(workspace_id, 100)
+    }
+
+    pub fn assistant_turns(&self, conversation_id: &str) -> Result<Vec<StoredTurn>> {
+        self.db().assistant_turns(conversation_id)
+    }
+
+    pub fn rate_assistant_turn(
+        &self,
+        turn_id: i64,
+        rating: Option<Rating>,
+        note: Option<&str>,
+    ) -> Result<()> {
+        self.db().rate_assistant_turn(turn_id, rating, note)
+    }
+
+    pub fn delete_assistant_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.conversations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(conversation_id);
+        self.db().delete_assistant_conversation(conversation_id)
     }
 
     pub fn llm_log(&self, workspace_id: &str, limit: usize) -> Result<Vec<LlmLogEntry>> {

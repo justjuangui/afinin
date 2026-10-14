@@ -234,6 +234,29 @@ const MIGRATIONS: &[&str] = &[
         created_at    TEXT NOT NULL
     );
     "#,
+    // v9: saved assistant conversations, one row per answered question.
+    r#"
+    CREATE TABLE assistant_conversations (
+        id            TEXT PRIMARY KEY,
+        workspace_id  TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    );
+    CREATE SEQUENCE assistant_turns_id;
+    CREATE TABLE assistant_turns (
+        id               BIGINT PRIMARY KEY DEFAULT nextval('assistant_turns_id'),
+        conversation_id  TEXT NOT NULL,
+        workspace_id     TEXT NOT NULL,
+        question         TEXT NOT NULL,
+        turn             TEXT NOT NULL,   -- JSON Turn: answer, sources, assumptions…
+        latency_ms       BIGINT NOT NULL,
+        rating           TEXT,            -- up | down
+        rating_note      TEXT,
+        rated_at         TEXT,
+        created_at       TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -253,6 +276,7 @@ const ACCOUNT_DATA: &[(&str, &str)] = &[
     ("aws_anomalies", "source_account"),
 ];
 
+mod assistant;
 mod context;
 mod cost;
 mod cur;
@@ -262,6 +286,7 @@ mod llm;
 mod maintenance;
 mod settings;
 
+pub use assistant::{ConversationSummary, Rating, StoredTurn};
 pub use context::ContextRevision;
 pub use cost::ApiUsage;
 pub use cur::CurStatus;
@@ -383,7 +408,13 @@ impl Storage {
             )?;
         }
         tx.execute("DELETE FROM accounts WHERE workspace_id = ?", params![id])?;
-        for table in ["workspace_context", "workspace_context_history", "llm_log"] {
+        for table in [
+            "workspace_context",
+            "workspace_context_history",
+            "llm_log",
+            "assistant_conversations",
+            "assistant_turns",
+        ] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE workspace_id = ?"),
                 params![id],

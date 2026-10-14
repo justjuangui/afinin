@@ -359,6 +359,29 @@ export interface Turn {
   context_revision: number;
   /** Figures in the answer that match nothing in the data. */
   unverified_figures: string[];
+  /** Saved turn id, for ratings; null if it couldn't be saved. */
+  turn_id: number | null;
+  /** Latest successful sync when the answer was given. */
+  data_as_of: string | null;
+}
+
+export type Rating = "up" | "down";
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  turns: number;
+}
+
+export interface StoredTurn {
+  id: number;
+  question: string;
+  turn: Turn;
+  rating: Rating | null;
+  rating_note: string | null;
+  created_at: string;
 }
 
 export type AssistantProgress = { workspace_id: string } & (
