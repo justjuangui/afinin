@@ -55,6 +55,9 @@ export function networkOption(graph: Graph, positions: Map<string, Point>, s: Ne
     animation: false,
     tooltip: {
       confine: true,
+      backgroundColor: c.surface,
+      borderColor: c.edge,
+      textStyle: { color: c.text, fontSize: 12 },
       formatter: (p: { dataType?: string; data: { node?: GraphNode } }) => {
         const n = p.data.node;
         if (p.dataType !== "node" || !n) return "";
@@ -69,6 +72,11 @@ export function networkOption(graph: Graph, positions: Map<string, Point>, s: Ne
       {
         type: "graph",
         layout: "none",
+        // Keep the top band for the legend (left) and notices (right).
+        top: 96,
+        bottom: 24,
+        left: 24,
+        right: 24,
         roam: true,
         scaleLimit: { min: 0.05, max: 6 },
         edgeSymbol: ["none", "arrow"],
