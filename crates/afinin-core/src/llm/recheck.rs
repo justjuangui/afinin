@@ -95,6 +95,15 @@ mod tests {
             .map(|r| r.met)
             .collect();
         assert_eq!(met, [true, true, true, true, false, false]);
+        // Text around a figure is text: the words must appear too.
+        assert!(!check_expectations("Lambda spend $500.", &["EC2 spend $500".into()])[0].met);
+        assert!(check_expectations("EC2 spend $500.", &["ec2 spend $500".into()])[0].met);
+        // Units: an amount is not a percentage, and the other way round.
+        assert!(!check_expectations("Up 100% [1].", &["$100".into()])[0].met);
+        assert!(!check_expectations("It cost $12.5.", &["12.5%".into()])[0].met);
+        // Tables often drop the currency; small amounts still count.
+        assert!(check_expectations("| 1 | Static IP | 3.65 [1] |", &["$3.65".into()])[0].met);
+        assert!(check_expectations("Spend was USD 980.", &["USD 980".into()])[0].met);
         // Abbreviated answers count within 5%.
         assert!(check_expectations("Spend was $1.2k.", &["$1,234.56".into()])[0].met);
         assert!(!check_expectations("Spend was $1,334.56.", &["$1,234.56".into()])[0].met);
