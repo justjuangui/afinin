@@ -9,6 +9,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import { networkOption, type NetworkColors } from "../networkChart";
 import { fitScale, networkLayout } from "../networkLayout";
 import { useDarkMode } from "../theme";
+import { Callout } from "./Callout";
 import type { Graph } from "../types";
 
 echarts.use([GraphChart, TooltipComponent, LabelLayout, CanvasRenderer]);
@@ -139,21 +140,29 @@ export function NetworkGraph({ graph, short, selected, onSelect, matches, steps,
   return (
     <>
       <div ref={el} className="network-canvas" role="img" aria-label="Resource network" />
-      {(hidden > 0 || (showLoners && loners.size < graph.nodes.length)) && (
+      {hidden > 0 ? (
         <div className="network-loners">
-          {hidden > 0 ? (
-            <>
-              {hidden} {hidden === 1 ? "resource" : "resources"} with no connections hidden ·{" "}
-              <button className="link" onClick={() => setShowLoners(true)}>
-                Show
+          <Callout
+            tone="action"
+            title={`${hidden} ${hidden === 1 ? "resource has" : "resources have"} no connections`}
+            actions={
+              <button className="primary small" onClick={() => setShowLoners(true)}>
+                Show {hidden === 1 ? "it" : "them"}
               </button>
-            </>
-          ) : (
-            <button className="link" onClick={() => setShowLoners(false)}>
+            }
+          >
+            Hidden so the clusters stay readable. Search finds them anyway.
+          </Callout>
+        </div>
+      ) : (
+        showLoners &&
+        loners.size < graph.nodes.length && (
+          <div className="network-loners">
+            <button className="ghost small" onClick={() => setShowLoners(false)}>
               Hide resources with no connections
             </button>
-          )}
-        </div>
+          </div>
+        )
       )}
     </>
   );
