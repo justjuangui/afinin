@@ -380,10 +380,12 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 "monthly_cost_30d": node.cost.map(round),
                 "cost_basis": match node.cost_basis {
                     Some(crate::inventory::graph::CostBasis::Resource) => "this resource (CUR)",
-                    Some(crate::inventory::graph::CostBasis::ListPrice) => "this resource's monthly list price (not actual spend)",
-                    Some(crate::inventory::graph::CostBasis::Service) => "its whole service in this account (Cost Explorer)",
+                    Some(crate::inventory::graph::CostBasis::ListPrice) => "this resource's monthly public price (not actual spend; usage charges extra)",
+                    Some(crate::inventory::graph::CostBasis::Service) => "its whole service in this account, of which it is the only resource (Cost Explorer)",
                     None => "unknown without CUR",
                 },
+                "service": node.service,
+                "service_cost_30d_shared": node.service_cost.map(round),
                 "connections": connections,
             }))
         }

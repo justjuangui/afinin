@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use super::{Relation, RelationKind, Resource, ResourceType, Tier, normalize_dns};
+use crate::findings::pricing::{HOURS_PER_MONTH, PriceBook, PriceItem};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagFilter {
@@ -72,11 +73,16 @@ pub struct GraphNode {
     pub vpc_id: Option<String>,
     pub tags: BTreeMap<String, String>,
     pub attrs: BTreeMap<String, serde_json::Value>,
-    /// Monthly cost of this resource's service in its account (no CUR), of
-    /// the resource itself (CUR, M3) or its list price; see `cost_basis`.
+    /// The resource's own cost (CUR), its list price per month, or its
+    /// service total when it is the only resource of that service in the
+    /// account; see `cost_basis`. None when none of these is known.
     pub cost: Option<f64>,
     /// What `cost` is; `None` when there is no cost.
     pub cost_basis: Option<CostBasis>,
+    /// The resource's Cost Explorer service and that service's total in the
+    /// account over 30 days (shared by every resource of the service).
+    pub service: Option<&'static str>,
+    pub service_cost: Option<f64>,
     /// Included only as context for a filtered match.
     pub context: bool,
 }
@@ -91,11 +97,14 @@ pub struct GraphEdge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CostBasis {
-    /// Cost Explorer: the resource's service total in its account.
+    /// Cost Explorer: the service total in the account, shown on a resource
+    /// only when it is the service's sole resource there.
     Service,
     /// CUR: the resource's own cost.
     Resource,
-    /// The resource's monthly list price (Lightsail bundles).
+    /// The resource's public monthly price: Lightsail bundles, and hourly
+    /// resources such as Elastic IPs, NAT gateways, load balancers and EBS
+    /// volumes (usage-based charges such as data processed not included).
     ListPrice,
 }
 
@@ -117,12 +126,44 @@ pub struct CostOverlay {
     /// ARN (or native resource ID) → cost, from CUR.
     pub by_resource: HashMap<String, f64>,
     pub unit: String,
+    /// Public prices for list-price estimates.
+    pub prices: PriceBook,
+}
+
+/// Public monthly price of a resource with a fixed hourly or monthly price.
+fn list_price(r: &Resource, prices: &PriceBook) -> Option<f64> {
+    if let Some(p) = r
+        .attrs
+        .get("monthly_price_usd")
+        .and_then(serde_json::Value::as_f64)
+    {
+        return Some(p);
+    }
+    let monthly = |item: PriceItem| prices.get(&r.region, &item).0 * HOURS_PER_MONTH;
+    match r.resource_type {
+        // Every public IPv4 address is billed hourly, attached or not.
+        ResourceType::ElasticIp => Some(monthly(PriceItem::PublicIpv4Idle)),
+        ResourceType::NatGateway => Some(monthly(PriceItem::NatGatewayHour)),
+        ResourceType::LoadBalancer => r
+            .attrs
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| monthly(PriceItem::LoadBalancerHour(t.to_owned()))),
+        ResourceType::EbsVolume => Some(crate::findings::rules::volume_monthly_cost(prices, r).0),
+        _ => None,
+    }
 }
 
 /// A resource's cost and what it is: its own (CUR), else its list price,
-/// else its service total in the account. Lightsail resources never take the
-/// service total: one Lightsail bill on every instance and IP misleads.
-fn node_cost(r: &Resource, basis: CostBasis, costs: &CostOverlay) -> Option<(f64, CostBasis)> {
+/// else its service total when it is the only resource of that service in
+/// the account. A total shared by many resources would show the same figure
+/// on each (every Elastic IP "costing" the whole EC2 - Other line).
+fn node_cost(
+    r: &Resource,
+    basis: CostBasis,
+    costs: &CostOverlay,
+    per_service: &HashMap<(&str, &str), usize>,
+) -> Option<(f64, CostBasis)> {
     let own = (basis == CostBasis::Resource)
         .then(|| {
             costs
@@ -132,22 +173,27 @@ fn node_cost(r: &Resource, basis: CostBasis, costs: &CostOverlay) -> Option<(f64
         })
         .flatten()
         .map(|c| (*c, CostBasis::Resource));
-    let list = || {
-        r.attrs
-            .get("monthly_price_usd")
-            .and_then(serde_json::Value::as_f64)
-            .map(|c| (c, CostBasis::ListPrice))
-    };
-    let service = || {
-        if basis == CostBasis::Resource || r.resource_type.is_lightsail() {
+    let list = || list_price(r, &costs.prices).map(|c| (c, CostBasis::ListPrice));
+    let sole = || {
+        if basis == CostBasis::Resource {
             return None;
         }
-        r.resource_type
-            .cost_service()
-            .and_then(|s| costs.by_service.get(&(r.account_id.clone(), s.to_owned())))
-            .map(|c| (*c, CostBasis::Service))
+        let service = r.resource_type.cost_service()?;
+        if per_service.get(&(r.account_id.as_str(), service)) != Some(&1) {
+            return None;
+        }
+        service_cost(r, costs).map(|c| (c, CostBasis::Service))
     };
-    own.or_else(list).or_else(service)
+    own.or_else(list).or_else(sole)
+}
+
+/// The resource's service total in its account (Cost Explorer, 30 days).
+fn service_cost(r: &Resource, costs: &CostOverlay) -> Option<f64> {
+    let service = r.resource_type.cost_service()?;
+    costs
+        .by_service
+        .get(&(r.account_id.clone(), service.to_owned()))
+        .copied()
 }
 
 /// Resolved, de-duplicated edges between existing resources.
@@ -226,6 +272,13 @@ pub fn build(
     } else {
         CostBasis::Resource
     };
+    // Resources per (account, cost service), over everything stored.
+    let mut per_service: HashMap<(&str, &str), usize> = HashMap::new();
+    for r in resources {
+        if let Some(s) = r.resource_type.cost_service() {
+            *per_service.entry((r.account_id.as_str(), s)).or_default() += 1;
+        }
+    }
     let nodes: Vec<GraphNode> = resources
         .iter()
         .filter(|r| matched.contains(r.arn.as_str()) || context.contains(r.arn.as_str()))
@@ -241,8 +294,10 @@ pub fn build(
             vpc_id: r.vpc_id().map(str::to_owned),
             tags: r.tags.clone(),
             attrs: r.attrs.clone(),
-            cost: node_cost(r, cost_basis, costs).map(|(c, _)| c),
-            cost_basis: node_cost(r, cost_basis, costs).map(|(_, b)| b),
+            cost: node_cost(r, cost_basis, costs, &per_service).map(|(c, _)| c),
+            cost_basis: node_cost(r, cost_basis, costs, &per_service).map(|(_, b)| b),
+            service: r.resource_type.cost_service(),
+            service_cost: service_cost(r, costs),
             context: !matched.contains(r.arn.as_str()),
         })
         .collect();
@@ -619,8 +674,58 @@ mod tests {
         assert_eq!(cost("web"), (Some(10.0), Some(CostBasis::ListPrice)));
         assert_eq!(cost("ip-attached"), (Some(0.0), Some(CostBasis::ListPrice)));
         assert_eq!(cost("data"), (None, None), "never the whole Lightsail bill");
+        // The only instance in the account: the service total is its cost.
         assert_eq!(cost("i-9"), (Some(250.0), Some(CostBasis::Service)));
     }
+
+    #[test]
+    fn shared_service_totals_are_not_shown_as_each_resource_cost() {
+        let r = |t: ResourceType, id: &str, attrs: serde_json::Value| {
+            let mut r = Resource::new(t, format!("arn:{id}"), A, "us-east-1", id);
+            for (k, v) in attrs.as_object().unwrap() {
+                r.attrs.insert(k.clone(), v.clone());
+            }
+            r
+        };
+        let resources = vec![
+            r(ResourceType::ElasticIp, "eip-1", json!({})),
+            r(ResourceType::ElasticIp, "eip-2", json!({})),
+            r(ResourceType::NatGateway, "nat-1", json!({})),
+            r(ResourceType::LoadBalancer, "alb", json!({"type": "application"})),
+            r(ResourceType::EbsVolume, "vol", json!({"volume_type": "gp3", "size_gib": 100})),
+            r(ResourceType::S3Bucket, "logs", json!({})),
+            r(ResourceType::S3Bucket, "data", json!({})),
+        ];
+        let mut costs = CostOverlay::default();
+        costs
+            .by_service
+            .insert((A.into(), "EC2 - Other".into()), 156.9);
+        costs
+            .by_service
+            .insert((A.into(), "Amazon Simple Storage Service".into()), 7.3);
+        let filter = GraphFilter {
+            include_network: true,
+            ..Default::default()
+        };
+        let g = build(&resources, &[], &filter, &costs);
+        let node = |id: &str| g.nodes.iter().find(|n| n.native_id == id).unwrap();
+        let near = |id: &str, want: f64| {
+            let got = node(id).cost.unwrap();
+            assert!((got - want).abs() < 0.01, "{id}: {got} != {want}");
+            assert_eq!(node(id).cost_basis, Some(CostBasis::ListPrice));
+        };
+        // Public prices, not the shared EC2 - Other total.
+        near("eip-1", 3.65);
+        near("nat-1", 32.85);
+        near("alb", 16.425);
+        near("vol", 8.0);
+        // Two buckets share S3's total: neither shows it as its own cost…
+        assert_eq!(node("logs").cost, None);
+        // …but the total is there for the details panel.
+        assert_eq!(node("logs").service_cost, Some(7.3));
+        assert_eq!(node("eip-2").service, Some("EC2 - Other"));
+    }
+
 
     #[test]
     fn untaggable_resources_are_never_untagged() {

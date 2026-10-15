@@ -43,8 +43,8 @@ function shorten(s: string): string {
 
 function costLabel(n: GraphNode, unit: string): string {
   if (n.cost === null) return "";
-  if (n.cost_basis === "list_price") return n.cost === 0 ? "included" : `${money(n.cost, "USD")}/mo list price`;
-  return `${money(n.cost, unit)} last 30 days${n.cost_basis === "service" ? " (service total)" : ""}`;
+  if (n.cost_basis === "list_price") return n.cost === 0 ? "included" : `${money(n.cost, "USD")}/mo public price`;
+  return `${money(n.cost, unit)} last 30 days${n.cost_basis === "service" ? " (its service's total)" : ""}`;
 }
 
 export function networkOption(graph: Graph, positions: Map<string, Point>, s: NetworkState, c: NetworkColors) {

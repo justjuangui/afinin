@@ -478,16 +478,20 @@ impl Afinin {
             &cost::dates::format(cost::dates::add_days(today, -30)),
             &cost::dates::format(today),
         )?;
+        // With CUR, the overlay shows each resource's own cost. One lock per
+        // statement: two `self.db()` in one expression would deadlock.
+        let by_resource = self.db().cur_resource_costs(
+            workspace_id,
+            metric,
+            &cost::dates::format(cost::dates::add_days(today, -30)),
+            &cost::dates::format(today),
+        )?;
+        let prices = self.db().price_book()?;
         Ok(inventory::graph::CostOverlay {
             by_service,
-            // With CUR, the overlay shows each resource's own cost.
-            by_resource: self.db().cur_resource_costs(
-                workspace_id,
-                metric,
-                &cost::dates::format(cost::dates::add_days(today, -30)),
-                &cost::dates::format(today),
-            )?,
+            by_resource,
             unit,
+            prices,
         })
     }
 
