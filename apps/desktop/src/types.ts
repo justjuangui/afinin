@@ -203,9 +203,12 @@ export interface GraphNode {
   vpc_id: string | null;
   tags: Record<string, string>;
   attrs: Record<string, unknown>;
+  /** Own cost (CUR), public monthly price, or the service total when it is the service's only resource. */
   cost: number | null;
-  /** What `cost` is: CUR, a list price (Lightsail bundles) or the service total. */
   cost_basis: CostBasis | null;
+  /** Cost Explorer service, and its 30-day total in the account (shared by its resources). */
+  service: string | null;
+  service_cost: number | null;
   context: boolean;
 }
 

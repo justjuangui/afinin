@@ -81,8 +81,8 @@ const KIND_LABEL: Record<RelationKind, string> = {
 
 const BASIS_LABEL: Record<CostBasis, string> = {
   resource: "Resource cost, 30 days",
-  service: "Service cost per account, 30 days",
-  list_price: "List price per month",
+  service: "Service total (its only resource), 30 days",
+  list_price: "Public price per month",
 };
 
 /** Legend for the cost overlay: one label, or the mix of what nodes show. */
@@ -147,7 +147,16 @@ const ResourceNode = memo(function ResourceNode({ data, selected }: NodeProps<No
         </span>
       </span>
       {node.cost !== null && (
-        <span className="rnode-money" title={node.cost_basis === "list_price" ? "List price per month" : undefined}>
+        <span
+          className="rnode-money"
+          title={
+            node.cost_basis === "list_price"
+              ? "Public price per month, not measured spend"
+              : node.cost_basis === "service"
+                ? "Service total, 30 days: the only resource of its service in this account"
+                : "Last 30 days"
+          }
+        >
           {money(node.cost, unit, true)}
           {node.cost_basis === "list_price" && "/mo"}
         </span>
@@ -736,36 +745,7 @@ function Details({
             </dd>
           </>
         )}
-        {node.cost !== null && node.cost_basis === "list_price" ? (
-          <>
-            <dt>List price</dt>
-            <dd>
-              {node.cost === 0 ? "Included" : money(node.cost, "USD")}{" "}
-              <span className="muted small">{node.cost === 0 ? "while attached to an instance" : "per month"}</span>
-              <div className="muted small">Lightsail’s published price, not measured spend. Actual cost needs CUR.</div>
-            </dd>
-          </>
-        ) : node.cost !== null ? (
-          <>
-            <dt>{node.cost_basis === "service" ? "Service cost" : "Cost"}</dt>
-            <dd>
-              {money(node.cost, graph.unit)} <span className="muted small">last 30 days</span>
-              {node.cost_basis === "service" && (
-                <div className="muted small">Whole service in this account. Per-resource cost needs CUR.</div>
-              )}
-            </dd>
-          </>
-        ) : (
-          node.resource_type.startsWith("lightsail:") && (
-            <>
-              <dt>Cost</dt>
-              <dd className="muted small">
-                No list price for this Lightsail resource. The service total isn’t shown here because it covers every
-                Lightsail resource in the account; per-resource cost needs CUR.
-              </dd>
-            </>
-          )
-        )}
+        <CostRows node={node} unit={graph.unit} />
       </dl>
 
       {links.length > 0 && (
@@ -919,5 +899,68 @@ function ApplicationsPanel({
         </tbody>
       </table>
     </section>
+  );
+}
+
+/** What a list price leaves out, per resource type. */
+function listPriceNote(node: GraphNode): string {
+  if (node.resource_type.startsWith("lightsail:")) return "Lightsail’s published price, not measured spend.";
+  if (node.resource_type === "ec2:natgateway") return "Hourly price only; each GB processed is billed on top.";
+  if (node.resource_type === "elasticloadbalancing:loadbalancer")
+    return "Hourly price only; capacity units (LCUs) are billed on top.";
+  if (node.resource_type === "ec2:elastic-ip") return "Every public IPv4 address is billed hourly, attached or not.";
+  return "AWS public price, not measured spend.";
+}
+
+/**
+ * The resource's cost, and its service's total when that total is shared:
+ * without CUR, AWS reports cost per service, not per resource.
+ */
+function CostRows({ node, unit }: { node: GraphNode; unit: string }) {
+  const shared = node.service_cost !== null && node.cost_basis !== "service" && node.cost_basis !== "resource";
+  return (
+    <>
+      {node.cost !== null && node.cost_basis === "list_price" && (
+        <>
+          <dt>Public price</dt>
+          <dd>
+            {node.cost === 0 ? "Included" : money(node.cost, "USD")}{" "}
+            <span className="muted small">{node.cost === 0 ? "while attached to an instance" : "per month"}</span>
+            <div className="muted small">{listPriceNote(node)} Actual cost needs CUR.</div>
+          </dd>
+        </>
+      )}
+      {node.cost !== null && node.cost_basis !== "list_price" && (
+        <>
+          <dt>Cost</dt>
+          <dd>
+            {money(node.cost, unit)} <span className="muted small">last 30 days</span>
+            {node.cost_basis === "service" && (
+              <div className="muted small">
+                All of {node.service} in this account: this is its only resource there.
+              </div>
+            )}
+          </dd>
+        </>
+      )}
+      {shared && (
+        <>
+          <dt>{node.service}</dt>
+          <dd>
+            {money(node.service_cost ?? 0, unit)} <span className="muted small">last 30 days, this account</span>
+            <div className="muted small">
+              Shared by every resource of this service, so it isn’t shown as this one’s cost. Per-resource cost needs
+              CUR.
+            </div>
+          </dd>
+        </>
+      )}
+      {node.cost === null && !shared && node.resource_type.startsWith("lightsail:") && (
+        <>
+          <dt>Cost</dt>
+          <dd className="muted small">No list price for this Lightsail resource. Per-resource cost needs CUR.</dd>
+        </>
+      )}
+    </>
   );
 }
