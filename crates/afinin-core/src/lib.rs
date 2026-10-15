@@ -1150,6 +1150,16 @@ impl Afinin {
         // The workspace context is written by the user but may name accounts,
         // applications and people: mask it like everything else sent.
         let (plain_context, context_revision) = self.rendered_context(workspace_id)?;
+        // Similar reference answers guide which queries to run. Re-checks
+        // (`save` false) skip them: a reference would just copy itself.
+        let references = if save {
+            self.db().reference_turns(workspace_id)?
+        } else {
+            Vec::new()
+        };
+        let picked = llm::examples::select(question, &references);
+        let examples = conv.redactor.mask(&llm::examples::render(&picked));
+        let reference_examples = picked.len();
         let context = conv.redactor.mask(&plain_context);
         let screen_text = conv
             .redactor
@@ -1161,6 +1171,7 @@ impl Afinin {
             workspace: &context,
             workspace_revision: context_revision,
             screen: &screen_text,
+            examples: &examples,
         });
         let conv_id = conv.id.clone();
         let provider_name = format!("{:?}", cfg.provider);
@@ -1189,6 +1200,7 @@ impl Afinin {
         .await
         .map(|mut turn| {
             turn.missing_data = llm::tools::take_missing_data(&mut turn.citations);
+            turn.reference_examples = reference_examples;
             turn.assumptions = llm::tools::assumptions(&turn.citations);
             if !context.is_empty() {
                 turn.context_revision = context_revision;

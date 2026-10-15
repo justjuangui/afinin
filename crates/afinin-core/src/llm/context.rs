@@ -245,7 +245,11 @@ pub const AWS_BILLING_NOTES: &str = "\
 When the user asks about \"EC2\" costs, say whether you included it.
 - Unblended cost is what was billed when usage happened; amortized spreads upfront Savings Plan and Reserved Instance fees over the period; net unblended is after discounts.
 - Forecasts, percentages, shares and Savings Plans or RI coverage cannot be added together.
-- Some global services report no region.";
+- Some global services report no region.
+- Totals include every charge type: credits and refunds are negative amounts, tax is its own \"Tax\" service, and AWS \
+Support and Marketplace purchases are their own services. Mention them when they move a total noticeably.
+- In per-resource (CUR) breakdowns, charges AWS doesn't tie to a resource (support, tax, some data transfer) have no \
+resource ID: don't attribute them to a resource.";
 
 #[cfg(test)]
 mod tests {
