@@ -134,12 +134,24 @@ impl LlmSettings {
     }
 
     /// The price for a model as a provider reports it. Providers may answer
-    /// with a dated ID (`claude-x-20260901`), so the longest priced ID it
-    /// starts with also counts. Zero prices count as not set.
+    /// with a version of the configured ID (`claude-x-20260901`,
+    /// `model-v1:0`, `model@2026…`), so a priced ID followed by a version
+    /// also counts; another model sharing a prefix (`gpt-4` / `gpt-4o`) does
+    /// not. Zero prices count as not set.
     pub fn price(&self, model: &str) -> Option<TokenPrice> {
+        let version_of = |id: &str| {
+            model.strip_prefix(id).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest.starts_with([':', '@'])
+                    || rest.starts_with("-v")
+                    || rest
+                        .strip_prefix('-')
+                        .is_some_and(|d| d.len() >= 6 && d.chars().take(6).all(|c| c.is_ascii_digit()))
+            })
+        };
         self.prices
             .iter()
-            .filter(|(id, p)| model.starts_with(id.as_str()) && (p.input > 0.0 || p.output > 0.0))
+            .filter(|(id, p)| version_of(id) && (p.input > 0.0 || p.output > 0.0))
             .max_by_key(|(id, _)| id.len())
             .map(|(_, p)| *p)
     }
@@ -260,7 +272,12 @@ mod tests {
         };
         cfg.prices.insert("claude-x".into(), price);
         cfg.prices.insert("unpriced".into(), TokenPrice::default());
+        assert_eq!(cfg.price("claude-x"), Some(price));
         assert_eq!(cfg.price("claude-x-20260901"), Some(price));
+        assert_eq!(cfg.price("claude-x-v1:0"), Some(price));
+        // Another model that only shares a prefix is not priced.
+        assert_eq!(cfg.price("claude-xl"), None);
+        assert_eq!(cfg.price("claude-x-5"), None);
         assert_eq!(cfg.price("unpriced"), None);
         assert_eq!(cfg.price("other"), None);
         // 1M uncached in, 1M out, 1M cache reads (0.5), 1M cache writes (6.25).

@@ -539,6 +539,9 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
                         {llm.monthly_budget_usd != null && (
                           <span className="muted small"> of {usd(llm.monthly_budget_usd)}</span>
                         )}
+                        {llmUsage.some((u) => u.cost_usd == null) && (
+                          <span className="muted small"> + models without a price</span>
+                        )}
                       </td>
                     </tr>
                   )}
