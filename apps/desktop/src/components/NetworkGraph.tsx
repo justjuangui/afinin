@@ -6,7 +6,7 @@ import { GraphChart } from "echarts/charts";
 import { TooltipComponent } from "echarts/components";
 import { LabelLayout } from "echarts/features";
 import { CanvasRenderer } from "echarts/renderers";
-import { networkOption, type NetworkColors } from "../networkChart";
+import { NETWORK_PADDING, networkOption, type NetworkColors } from "../networkChart";
 import { fitScale, networkLayout } from "../networkLayout";
 import { useDarkMode } from "../theme";
 import { Callout } from "./Callout";
@@ -64,7 +64,14 @@ export function NetworkGraph({ graph, short, selected, onSelect, matches, steps,
   // those as dots (named in the tooltip) until there is room again.
   const unlabeled = useMemo(
     () =>
-      includeLoners && fitScale(positions, size.width, size.height) * zoom < 0.85
+      includeLoners &&
+      fitScale(
+        positions,
+        size.width - NETWORK_PADDING.left - NETWORK_PADDING.right,
+        size.height - NETWORK_PADDING.top - NETWORK_PADDING.bottom,
+      ) *
+        zoom <
+        0.85
         ? new Set([...loners].filter((id) => positions.has(id)))
         : undefined,
     [includeLoners, positions, size, zoom, loners],
@@ -144,15 +151,18 @@ export function NetworkGraph({ graph, short, selected, onSelect, matches, steps,
         <div className="network-loners">
           <Callout
             tone="action"
-            title={`${hidden} ${hidden === 1 ? "resource has" : "resources have"} no connections`}
+            className="compact"
+            title={`${hidden} ${hidden === 1 ? "resource with no connections is" : "resources with no connections are"} hidden`}
             actions={
-              <button className="primary small" onClick={() => setShowLoners(true)}>
+              <button
+                className="primary small"
+                onClick={() => setShowLoners(true)}
+                title="Hidden so the clusters stay readable; search finds them anyway"
+              >
                 Show {hidden === 1 ? "it" : "them"}
               </button>
             }
-          >
-            Hidden so the clusters stay readable. Search finds them anyway.
-          </Callout>
+          />
         </div>
       ) : (
         showLoners &&
