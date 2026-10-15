@@ -126,8 +126,8 @@ export function FindingsView({ workspaceId, dataVersion, onExplain, onScreen }: 
               <h2>Nothing to look at</h2>
               <p className="muted">
                 No {kind === "all" ? "" : `${KINDS.find((k) => k.id === kind)?.label.toLowerCase()} `}findings. Afinín checks
-                after every sync for unattached volumes, idle IPs, load balancers and NAT gateways, stopped instances, old
-                snapshots and unusual spend.
+                after every sync for unattached volumes and disks, idle IPs, load balancers and NAT gateways, stopped EC2 and
+                Lightsail instances, old snapshots and unusual spend.
               </p>
             </div>
           )}

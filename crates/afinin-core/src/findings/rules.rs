@@ -83,6 +83,7 @@ fn finish(
             "price_source",
             match source {
                 Some(PriceSource::PriceList) => "AWS Price List (public price)",
+                Some(PriceSource::LightsailBundle) => "Lightsail bundle price (public price)",
                 _ => "built-in us-east-1 list price (public price)",
             },
         );
@@ -108,6 +109,14 @@ pub fn volume_monthly_cost(prices: &PriceBook, v: &Resource) -> (f64, PriceSourc
         _ => {}
     }
     (cost, src)
+}
+
+/// Lightsail block storage, USD per GB-month (us-east-1 list price; the
+/// Lightsail API doesn't return disk prices).
+const LIGHTSAIL_DISK_GB_MONTH: f64 = 0.10;
+
+fn attached(r: &Resource) -> Option<bool> {
+    r.attrs.get("attached").and_then(|v| v.as_bool())
 }
 
 fn age_days(r: &Resource, key: &str, today: Date) -> Option<i64> {
@@ -156,6 +165,53 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                                 EC2 console → Elastic IPs → Actions → Release."
                         .into();
                 out.push(finish(f, savings, basis, Some(src)));
+            }
+            T::LightsailStaticIp if attached(r) == Some(false) => {
+                let (hourly, src) = input.prices.get(&r.region, &PriceItem::PublicIpv4Idle);
+                let (savings, basis) = input.savings(r, hourly * HOURS_PER_MONTH);
+                let mut f = base("lightsail-static-ip-unattached", r)
+                    .evidence("public_ip", str_attr(r, "public_ip"));
+                f.title = format!("Unattached Lightsail static IP {}", r.display_name());
+                f.summary = "Lightsail static IPs are free only while attached to an instance; an unattached one is billed every hour.".into();
+                f.how_to_fix = "If nothing depends on this address (DNS records, allow-lists), delete it: \
+                                Lightsail console → Networking → the static IP → Delete. Or attach it to the instance that should use it."
+                    .into();
+                out.push(finish(f, savings, basis, Some(src)));
+            }
+            T::LightsailInstance if str_attr(r, "state") == Some("stopped") => {
+                // Without a bundle price there is nothing honest to estimate.
+                let Some(price) = num_attr(r, "monthly_price_usd") else {
+                    continue;
+                };
+                let (savings, basis) = input.savings(r, price);
+                let mut f = base("lightsail-instance-stopped", r)
+                    .evidence("bundle", str_attr(r, "bundle_id"))
+                    .evidence("monthly_list_price_usd", price);
+                f.title = format!(
+                    "Stopped Lightsail instance {} is still billed",
+                    r.display_name()
+                );
+                f.summary = "Lightsail bills an instance's whole bundle for as long as it exists, running or stopped.".into();
+                f.how_to_fix = "If it is no longer needed, create a snapshot (billed per GB, far less than the bundle) and delete \
+                                the instance in the Lightsail console. To keep it, consider a smaller bundle."
+                    .into();
+                out.push(finish(
+                    f,
+                    savings,
+                    basis,
+                    Some(PriceSource::LightsailBundle),
+                ));
+            }
+            T::LightsailDisk if attached(r) == Some(false) => {
+                let size = num_attr(r, "size_gib").unwrap_or(0.0);
+                let (savings, basis) = input.savings(r, size * LIGHTSAIL_DISK_GB_MONTH);
+                let mut f = base("lightsail-disk-unattached", r).evidence("size_gib", size);
+                f.title = format!("Unattached Lightsail disk {}", r.display_name());
+                f.summary = "A Lightsail block storage disk not attached to any instance keeps billing for its full size.".into();
+                f.how_to_fix = "Check that no one needs the data. Create a disk snapshot if you might, then delete the disk: \
+                                Lightsail console → Storage → the disk → Delete."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
             }
             T::LoadBalancer if str_attr(r, "state") == Some("active") => {
                 let groups: Vec<&Resource> = input
@@ -520,5 +576,77 @@ mod tests {
         let busy = HashMap::from([("nat-1".to_owned(), 250.0)]);
         let findings = run(&resources, &relations, &HashMap::new(), Some(&busy));
         assert!(findings.iter().all(|f| f.rule != "nat-idle"));
+    }
+
+    #[test]
+    fn lightsail_waste_rules() {
+        let ls = |t: T, name: &str, attrs: serde_json::Value| {
+            let mut r = Resource::new(t, format!("arn:aws:lightsail:{R}:{A}:{name}"), A, R, name);
+            for (k, v) in attrs.as_object().unwrap() {
+                r.attrs.insert(k.clone(), v.clone());
+            }
+            r
+        };
+        let resources = vec![
+            ls(T::LightsailStaticIp, "ip-free", json!({"attached": false})),
+            ls(T::LightsailStaticIp, "ip-used", json!({"attached": true})),
+            // Scanned before `attached` was recorded: unknown, not flagged.
+            ls(T::LightsailStaticIp, "ip-old", json!({})),
+            ls(
+                T::LightsailInstance,
+                "vm-stopped",
+                json!({"state": "stopped", "monthly_price_usd": 24.0}),
+            ),
+            ls(
+                T::LightsailInstance,
+                "vm-running",
+                json!({"state": "running", "monthly_price_usd": 24.0}),
+            ),
+            ls(
+                T::LightsailInstance,
+                "vm-no-price",
+                json!({"state": "stopped"}),
+            ),
+            ls(
+                T::LightsailDisk,
+                "disk-free",
+                json!({"attached": false, "size_gib": 32}),
+            ),
+            ls(
+                T::LightsailDisk,
+                "disk-used",
+                json!({"attached": true, "size_gib": 32}),
+            ),
+        ];
+        let findings = run(&resources, &[], &HashMap::new(), None);
+        let rules: Vec<(&str, Option<f64>)> = findings
+            .iter()
+            .map(|f| (f.rule, f.monthly_savings))
+            .collect();
+        assert_eq!(
+            rules,
+            [
+                ("lightsail-static-ip-unattached", Some(3.65)),
+                ("lightsail-instance-stopped", Some(24.0)),
+                ("lightsail-disk-unattached", Some(3.2)),
+            ]
+        );
+        let stopped = &findings[1];
+        assert_eq!(stopped.savings_basis, Some(SavingsBasis::PublicPrice));
+        assert_eq!(
+            stopped.evidence["price_source"],
+            "Lightsail bundle price (public price)"
+        );
+        // CUR actual cost wins over the list price.
+        let actual = HashMap::from([(resources[3].arn.clone(), 19.5)]);
+        let with_cur = run(&resources, &[], &actual, None);
+        let f = with_cur
+            .iter()
+            .find(|f| f.rule == "lightsail-instance-stopped")
+            .unwrap();
+        assert_eq!(
+            (f.monthly_savings, f.savings_basis),
+            (Some(19.5), Some(SavingsBasis::Actual))
+        );
     }
 }

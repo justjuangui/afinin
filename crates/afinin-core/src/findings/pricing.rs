@@ -136,6 +136,8 @@ pub enum PriceSource {
     PriceList,
     /// Built-in us-east-1 list price.
     BuiltIn,
+    /// The resource's Lightsail bundle price, from the Lightsail API.
+    LightsailBundle,
 }
 
 /// Cached prices by (region, item key).
