@@ -783,7 +783,7 @@ function Details({
       {Object.keys(node.tags).length > 0 && (
         <>
           <h3>Tags</h3>
-          <dl>
+          <dl className="tag-list">
             {Object.entries(node.tags).map(([k, v]) => (
               <div key={k} className="kv">
                 <dt>{k}</dt>
