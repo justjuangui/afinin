@@ -190,6 +190,7 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
         r.with_tags(tags(d.tags()))
             .attr("state", s(d.state().map(|x| x.as_str())))
             .attr("size_gib", d.size_in_gb().and_then(num))
+            .attr("attached", d.is_attached().map(Value::Bool))
             .attr("attached_to", s(d.attached_to()))
             .attr(
                 "availability_zone",
@@ -209,6 +210,7 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
         let mut r = Resource::new(T::LightsailStaticIp, me, acct, region, name);
         r.name = ip.ip_address().map(str::to_owned);
         r.attr("public_ip", s(ip.ip_address()))
+            .attr("attached", ip.is_attached().map(Value::Bool))
             .attr("attached_to", s(ip.attached_to()))
             .attr("create_time", time(ip.created_at()));
         // Lightsail doesn't charge for a static IP attached to an instance.
