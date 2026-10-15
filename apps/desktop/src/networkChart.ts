@@ -28,6 +28,12 @@ export interface NetworkState {
   unlabeled?: Set<string>;
 }
 
+/**
+ * Canvas margins around the drawing, in pixels: the legend (top), the notice
+ * (bottom left) and the labels of the right-most nodes, which the fit ignores.
+ */
+export const NETWORK_PADDING = { top: 56, bottom: 72, left: 24, right: 180 };
+
 /** Names longer than this are shortened; the tooltip has the full name. */
 const LABEL_CHARS = 24;
 
@@ -72,11 +78,9 @@ export function networkOption(graph: Graph, positions: Map<string, Point>, s: Ne
       {
         type: "graph",
         layout: "none",
-        // Keep the top band for the legend (left) and notices (right).
-        top: 96,
-        bottom: 24,
-        left: 24,
-        right: 24,
+        ...NETWORK_PADDING,
+        // Without this ECharts stretches the layout to fill the box.
+        preserveAspect: "contain",
         roam: true,
         scaleLimit: { min: 0.05, max: 6 },
         edgeSymbol: ["none", "arrow"],

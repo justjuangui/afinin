@@ -120,16 +120,13 @@ function upright(pos: Map<string, Point>): Map<string, Point> {
   return w <= h ? pos : new Map([...pos].map(([id, p]) => [id, { x: p.y, y: p.x }]));
 }
 
-/**
- * Pixels per layout unit when the whole layout is fitted into a canvas
- * (labels sit to the right of nodes, so they count towards the width).
- */
+/** Pixels per layout unit when the node positions are fitted into a box. */
 export function fitScale(positions: Map<string, Point>, width: number, height: number): number {
   if (positions.size === 0 || width <= 0 || height <= 0) return 1;
   const xs = [...positions.values()].map((p) => p.x);
   const ys = [...positions.values()].map((p) => p.y);
-  const w = Math.max(...xs) - Math.min(...xs) + LABEL_W;
-  const h = Math.max(...ys) - Math.min(...ys) + ROW_H;
+  const w = Math.max(...xs) - Math.min(...xs) || 1;
+  const h = Math.max(...ys) - Math.min(...ys) || 1;
   return Math.min(width / w, height / h);
 }
 
