@@ -126,6 +126,7 @@ mod tests {
             rating: None,
             rating_note: None,
             reference: true,
+            expected: Vec::new(),
             created_at: "2026-10-01T10:00:00Z".into(),
         }
     }

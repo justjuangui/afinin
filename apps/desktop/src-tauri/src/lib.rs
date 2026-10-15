@@ -558,6 +558,23 @@ async fn set_reference_turn(
 }
 
 #[tauri::command]
+async fn set_reference_expected(
+    state: State<'_, AppState>,
+    turn_id: i64,
+    expected: Vec<String>,
+) -> CmdResult<Vec<String>> {
+    blocking(&state, move |core| {
+        core.set_reference_expected(turn_id, &expected)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn reference_figures(state: State<'_, AppState>, turn_id: i64) -> CmdResult<Vec<String>> {
+    blocking(&state, move |core| core.reference_figures(turn_id)).await
+}
+
+#[tauri::command]
 async fn assistant_conversations(
     state: State<'_, AppState>,
     workspace_id: String,
@@ -840,6 +857,8 @@ pub fn run() {
             llm_usage,
             reference_turns,
             set_reference_turn,
+            set_reference_expected,
+            reference_figures,
             rate_assistant_turn,
             delete_assistant_conversation,
             workspace_context,

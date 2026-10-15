@@ -122,6 +122,9 @@ export const api = {
   assistantGaps: (workspaceId: string) => invoke<StoredTurn[]>("assistant_gaps", { workspaceId }),
   referenceTurns: (workspaceId: string) => invoke<StoredTurn[]>("reference_turns", { workspaceId }),
   setReferenceTurn: (turnId: number, reference: boolean) => invoke<void>("set_reference_turn", { turnId, reference }),
+  setReferenceExpected: (turnId: number, expected: string[]) =>
+    invoke<string[]>("set_reference_expected", { turnId, expected }),
+  referenceFigures: (turnId: number) => invoke<string[]>("reference_figures", { turnId }),
   recheckReference: (workspaceId: string, turnId: number) =>
     invoke<Recheck>("recheck_reference", { workspaceId, turnId }),
   deleteAssistantConversation: (conversationId: string) =>

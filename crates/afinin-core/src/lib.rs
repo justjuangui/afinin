@@ -1098,6 +1098,7 @@ impl Afinin {
             .await?;
         let (queries_removed, queries_added) =
             llm::recheck::compare_queries(&saved.turn.citations, &after.citations);
+        let expectations = llm::recheck::check_expectations(&after.answer, &saved.expected);
         Ok(llm::recheck::Recheck {
             turn_id,
             question: saved.question,
@@ -1105,7 +1106,20 @@ impl Afinin {
             after,
             queries_removed,
             queries_added,
+            expectations,
         })
+    }
+
+    /// Sets the values a reference answer's re-checks must state; returns
+    /// them as stored.
+    pub fn set_reference_expected(&self, turn_id: i64, expected: &[String]) -> Result<Vec<String>> {
+        self.db().set_expected(turn_id, expected)
+    }
+
+    /// Figures in a saved answer, offered as expected values.
+    pub fn reference_figures(&self, turn_id: i64) -> Result<Vec<String>> {
+        let saved = self.db().assistant_turn(turn_id)?;
+        Ok(llm::grounding::figure_texts(&saved.turn.answer))
     }
 
     pub fn reference_turns(&self, workspace_id: &str) -> Result<Vec<StoredTurn>> {
