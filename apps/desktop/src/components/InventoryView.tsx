@@ -366,6 +366,10 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
       id: n.id,
       type: "resource",
       position: positions.get(n.id) ?? { x: 0, y: 0 },
+      // Fixed size, given up front: the graph is read-only (no onNodesChange),
+      // so measured sizes never reach the nodes and the minimap drew nothing.
+      width: NODE_W,
+      height: NODE_H,
       selected: n.id === selected,
       data: {
         node: n,
@@ -620,9 +624,11 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
                     className="minimap"
                     nodeStrokeWidth={0}
                     nodeBorderRadius={2}
-                    // Muted, not the edge color: at minimap scale edge-colored nodes vanish
-                    // into the dark background. The accent frame marks the current view.
-                    nodeColor="var(--muted)"
+                    // Cost color when the overlay is on, else muted (the edge color
+                    // vanished into the dark background). The accent frame marks the view.
+                    nodeColor={(n: Node<NodeData>) =>
+                      n.data.costStep !== null ? `var(--cost-${n.data.costStep + 1})` : "var(--muted)"
+                    }
                     maskColor="var(--minimap-mask)"
                     maskStrokeColor="var(--accent)"
                     maskStrokeWidth={2}
