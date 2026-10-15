@@ -619,8 +619,13 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
                     zoomable
                     className="minimap"
                     nodeStrokeWidth={0}
-                    nodeColor="var(--edge)"
+                    nodeBorderRadius={2}
+                    // Muted, not the edge color: at minimap scale edge-colored nodes vanish
+                    // into the dark background. The accent frame marks the current view.
+                    nodeColor="var(--muted)"
                     maskColor="var(--minimap-mask)"
+                    maskStrokeColor="var(--accent)"
+                    maskStrokeWidth={2}
                   />
                 )}
               </ReactFlow>
