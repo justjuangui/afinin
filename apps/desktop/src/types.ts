@@ -370,6 +370,8 @@ export interface Turn {
   data_as_of: string | null;
   /** Data the answer needed but Afinín doesn't have. */
   missing_data: MissingData[];
+  /** Reference answers whose queries guided this one. */
+  reference_examples: number;
 }
 
 export type MissingNeed = "cur" | "inventory_sync" | "cost_allocation_tags" | "longer_history" | "other";

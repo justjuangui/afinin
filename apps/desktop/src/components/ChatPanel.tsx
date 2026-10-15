@@ -341,6 +341,8 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
                     {e.turn.model}
                     {e.turn.data_as_of && ` · data as of ${relativeTime(e.turn.data_as_of)}`}
                     {e.turn.context_revision > 0 && ` · workspace context r${e.turn.context_revision}`}
+                    {e.turn.reference_examples > 0 &&
+                      ` · guided by ${e.turn.reference_examples} reference answer${e.turn.reference_examples === 1 ? "" : "s"}`}
                     {e.turn.redacted ? ` · ${e.turn.masked_values} identifiers masked` : " · not redacted (local model)"}
                     {e.turn.citations.length > 0 && ` · ${e.turn.citations.length} data source(s)`}
                   </div>

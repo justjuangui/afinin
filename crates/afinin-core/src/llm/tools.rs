@@ -26,7 +26,7 @@ fn common_cost_props() -> serde_json::Map<String, Value> {
         "tag_key": {"type": "string", "description": "Cost allocation tag key when group_by is `tag`."},
         "metric": {"type": "string", "enum": ["unblended", "amortized", "net_unblended"], "description": "Defaults to the workspace's default metric."},
         "account_ids": {"type": "array", "items": {"type": "string"}, "description": "Only these AWS account IDs."},
-        "services": {"type": "array", "items": {"type": "string"}, "description": "Only these services (Cost Explorer names); with Cost Explorer data only when grouping by service or account."},
+        "services": {"type": "array", "items": {"type": "string"}, "description": "Only these services, by Cost Explorer name, e.g. \"Amazon Elastic Compute Cloud - Compute\" (instances), \"EC2 - Other\" (EBS, NAT gateways, Elastic IPs, EC2 data transfer), \"Amazon Lightsail\". With Cost Explorer data only when grouping by service or account."},
         "top_n": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Groups to return; the rest is summed as other. Default 10."}
     });
     v.as_object().cloned().unwrap_or_default()

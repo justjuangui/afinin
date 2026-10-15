@@ -8,6 +8,7 @@
 
 pub mod agent;
 pub mod context;
+pub mod examples;
 pub mod grounding;
 pub mod providers;
 pub mod recheck;

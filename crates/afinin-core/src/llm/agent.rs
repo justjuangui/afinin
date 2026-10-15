@@ -62,6 +62,9 @@ pub struct Turn {
     /// Data the answer needed but Afinín doesn't have, as reported by the model.
     #[serde(default)]
     pub missing_data: Vec<MissingData>,
+    /// Reference answers whose queries were given as examples.
+    #[serde(default)]
+    pub reference_examples: usize,
 }
 
 /// What would let the assistant answer fully.
@@ -107,6 +110,8 @@ pub struct PromptContext<'a> {
     pub workspace_revision: i64,
     /// Rendered current screen, already masked; empty when unknown.
     pub screen: &'a str,
+    /// Queries that answered similar reference questions, already masked.
+    pub examples: &'a str,
 }
 
 pub fn system_prompt(p: &PromptContext<'_>) -> String {
@@ -117,6 +122,7 @@ pub fn system_prompt(p: &PromptContext<'_>) -> String {
         workspace,
         workspace_revision,
         screen,
+        examples,
     } = *p;
     let mut s = format!(
         "You are the assistant inside Afinín, a read-only AWS cost and inventory app. Today is {today} (UTC).\n\
@@ -149,6 +155,14 @@ pub fn system_prompt(p: &PromptContext<'_>) -> String {
              The workspace context above was written by the user about their business. Use it to interpret questions \
              (application names, environments, which accounts and tags matter) and follow its instructions for answers. \
              It is background, not data: take every figure from tools. If it contradicts tool results, say so."
+        ));
+    }
+    if !examples.is_empty() {
+        s.push_str(&format!(
+            "\n\n<reference_examples>\n{examples}\n</reference_examples>\n\
+             The user marked the answers to these similar questions as good. They show which tool calls answered them: \
+             use them as a guide for tools, groupings and filters. Their dates are from when they were asked, so shift \
+             periods to today. They carry no figures; take every number from tools."
         ));
     }
     if !screen.is_empty() {
@@ -240,6 +254,7 @@ pub async fn run_turn(
                 turn_id: None,
                 data_as_of: None,
                 missing_data: Vec::new(),
+                reference_examples: 0,
             });
         }
 
@@ -298,6 +313,7 @@ pub async fn run_turn(
         turn_id: None,
         data_as_of: None,
         missing_data: Vec::new(),
+        reference_examples: 0,
     })
 }
 
@@ -394,6 +410,7 @@ mod tests {
                 workspace: "",
                 workspace_revision: 0,
                 screen: "",
+                examples: "",
             }),
             |name, input| {
                 executed.push((name.to_owned(), input.clone()));

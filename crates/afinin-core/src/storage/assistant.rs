@@ -300,6 +300,7 @@ mod tests {
             turn_id: None,
             data_as_of: Some("2026-10-14T08:00:00Z".into()),
             missing_data: Vec::new(),
+            reference_examples: 0,
         }
     }
 
