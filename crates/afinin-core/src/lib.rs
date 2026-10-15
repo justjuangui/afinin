@@ -573,7 +573,20 @@ impl Afinin {
     /// Filter options with counts.
     pub fn inventory_facets(&self, workspace_id: &str) -> Result<InventoryFacets> {
         let (resources, _) = self.db().workspace_inventory(workspace_id)?;
-        Ok(inventory::graph::facets(&resources))
+        let mut facets = inventory::graph::facets(&resources);
+        // Account names as in the cost filters: "Production (944211113721)".
+        let names: HashMap<String, String> = self
+            .db()
+            .linked_account_values(workspace_id)?
+            .into_iter()
+            .map(|v| (v.key, v.label))
+            .collect();
+        for a in &mut facets.accounts {
+            if let Some(label) = names.get(&a.key) {
+                a.label.clone_from(label);
+            }
+        }
+        Ok(facets)
     }
 
     pub fn tag_values(&self, workspace_id: &str, key: &str) -> Result<Vec<Facet>> {
