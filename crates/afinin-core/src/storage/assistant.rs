@@ -60,8 +60,14 @@ pub struct StoredTurn {
     pub rating_note: Option<String>,
     /// Kept as a reference answer to re-check against current data.
     pub reference: bool,
+    /// Values a re-check's answer must state (figures or text).
+    pub expected: Vec<String>,
     pub created_at: String,
 }
+
+/// Expected values per reference answer, and characters per value.
+pub const MAX_EXPECTED: usize = 10;
+pub const MAX_EXPECTED_CHARS: usize = 200;
 
 fn to_json<T: Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|e| Error::Other(format!("cannot store assistant turn: {e}")))
@@ -146,7 +152,7 @@ impl Storage {
     /// Saved turns matching `filter` (a SQL condition with one `?` for `arg`).
     fn query_turns(&self, filter: &str, arg: &dyn duckdb::ToSql) -> Result<Vec<StoredTurn>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT id, question, screen, turn, rating, rating_note, is_reference, created_at
+            "SELECT id, question, screen, turn, rating, rating_note, is_reference, created_at, expected
              FROM assistant_turns WHERE {filter} ORDER BY id"
         ))?;
         let rows = stmt.query_map([arg], |r| {
@@ -159,10 +165,12 @@ impl Storage {
                 r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<bool>>(6)?,
                 r.get::<_, String>(7)?,
+                r.get::<_, Option<String>>(8)?,
             ))
         })?;
         rows.map(|row| {
-            let (id, question, screen, doc, rating, rating_note, is_reference, created_at) = row?;
+            let (id, question, screen, doc, rating, rating_note, is_reference, created_at, expected) =
+                row?;
             let invalid = |e: serde_json::Error| {
                 Error::Other(format!("stored assistant turn {id} is invalid: {e}"))
             };
@@ -177,6 +185,11 @@ impl Storage {
                 rating: rating.as_deref().and_then(Rating::parse),
                 rating_note,
                 reference: is_reference.unwrap_or(false),
+                expected: expected
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(invalid)?
+                    .unwrap_or_default(),
                 created_at,
             })
         })
@@ -223,6 +236,37 @@ impl Storage {
             return Err(Error::NotFound(format!("assistant turn {turn_id}")));
         }
         Ok(())
+    }
+
+    /// Replaces a turn's expected values: trimmed, without blanks or repeats,
+    /// at most [`MAX_EXPECTED`] of at most [`MAX_EXPECTED_CHARS`] characters.
+    pub fn set_expected(&self, turn_id: i64, expected: &[String]) -> Result<Vec<String>> {
+        let mut clean: Vec<String> = Vec::new();
+        for e in expected {
+            let e = e.trim();
+            if e.is_empty() || clean.iter().any(|c| c.eq_ignore_ascii_case(e)) {
+                continue;
+            }
+            if e.chars().count() > MAX_EXPECTED_CHARS {
+                return Err(Error::Other(format!(
+                    "an expected value can be at most {MAX_EXPECTED_CHARS} characters"
+                )));
+            }
+            clean.push(e.to_owned());
+        }
+        if clean.len() > MAX_EXPECTED {
+            return Err(Error::Other(format!(
+                "a reference answer can have at most {MAX_EXPECTED} expected values"
+            )));
+        }
+        let n = self.conn.execute(
+            "UPDATE assistant_turns SET expected = ? WHERE id = ?",
+            params![to_json(&clean)?, turn_id],
+        )?;
+        if n == 0 {
+            return Err(Error::NotFound(format!("assistant turn {turn_id}")));
+        }
+        Ok(clean)
     }
 
     /// Which workspace a conversation belongs to, if it was saved.
@@ -369,6 +413,17 @@ mod tests {
             Some("Findings")
         );
         assert_eq!(db.assistant_turn(c2).unwrap().question, "Top findings?");
+
+        // Expected values: trimmed, no blanks or repeats, limited.
+        assert!(refs[0].expected.is_empty());
+        let stored = db
+            .set_expected(c2, &[" $1,234.56 ".into(), "".into(), "$1,234.56".into(), "EC2".into()])
+            .unwrap();
+        assert_eq!(stored, ["$1,234.56", "EC2"]);
+        assert_eq!(db.assistant_turn(c2).unwrap().expected, stored);
+        let too_many: Vec<String> = (0..=MAX_EXPECTED).map(|i| i.to_string()).collect();
+        assert!(db.set_expected(c2, &too_many).is_err());
+        assert!(db.set_expected(-1, &[]).is_err());
 
         // Answers that reported missing data are listed as gaps.
         assert!(db.assistant_gaps(&ws.id, 10).unwrap().is_empty());

@@ -584,3 +584,11 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .trace-error { color: var(--danger); }
 .price-fields { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px 12px; margin: 4px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .price-fields legend { font-size: 13px; padding: 0 4px; }
+.recheck-summary { display: flex; flex-wrap: wrap; gap: 12px; margin: 0; }
+.expected { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.expected .inline-row { flex: 1 1 260px; margin-top: 0; }
+.expected-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--accent-soft); }
+.expected-chip.met { background: var(--ok-soft); color: var(--ok); }
+.expected-chip.missed { background: var(--danger-soft); color: var(--danger); }
+.expected-chip .icon { padding: 0 2px; font-size: 13px; line-height: 1; }
+.expected-add { align-self: flex-start; margin-top: 2px; }

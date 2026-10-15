@@ -269,6 +269,10 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE llm_log ADD COLUMN cache_read_tokens BIGINT DEFAULT 0;
     ALTER TABLE llm_log ADD COLUMN cache_write_tokens BIGINT DEFAULT 0;
     "#,
+    // v12: expected values of reference answers, checked by re-checks.
+    r#"
+    ALTER TABLE assistant_turns ADD COLUMN expected TEXT;
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.

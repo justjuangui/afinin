@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::agent::{Citation, Turn};
 use super::tools::describe;
+use super::grounding::states_figure;
 use super::trace::call_key;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -21,6 +22,28 @@ pub struct Recheck {
     pub queries_removed: Vec<String>,
     /// Queries the new answer ran that the reference did not.
     pub queries_added: Vec<String>,
+    /// The reference's expected values, checked against the new answer.
+    pub expectations: Vec<ExpectationResult>,
+}
+
+/// An expected value of a reference answer and whether the new answer has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExpectationResult {
+    pub expected: String,
+    pub met: bool,
+}
+
+/// Expected values: a figure must be stated (at any rounding, so `$1,234.56`
+/// is met by "$1.23k"); other text must appear, ignoring case.
+pub fn check_expectations(answer: &str, expected: &[String]) -> Vec<ExpectationResult> {
+    let lower = answer.to_lowercase();
+    expected
+        .iter()
+        .map(|e| ExpectationResult {
+            expected: e.clone(),
+            met: states_figure(answer, e).unwrap_or_else(|| lower.contains(&e.to_lowercase())),
+        })
+        .collect()
 }
 
 fn key(c: &Citation) -> String {
@@ -59,6 +82,22 @@ mod tests {
             ok: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn expected_figures_match_at_any_rounding_and_text_ignores_case() {
+        let answer = "September spend was $1,234.56 [1], up 12.5% — mostly Amazon EC2. Forecast 1.2k.";
+        let expected: Vec<String> = ["$1,234.56", "12.5%", "1,200", "amazon ec2", "$999.00", "Lambda"]
+            .map(String::from)
+            .into();
+        let met: Vec<bool> = check_expectations(answer, &expected)
+            .iter()
+            .map(|r| r.met)
+            .collect();
+        assert_eq!(met, [true, true, true, true, false, false]);
+        // Abbreviated answers count within 5%.
+        assert!(check_expectations("Spend was $1.2k.", &["$1,234.56".into()])[0].met);
+        assert!(!check_expectations("Spend was $1,334.56.", &["$1,234.56".into()])[0].met);
     }
 
     #[test]

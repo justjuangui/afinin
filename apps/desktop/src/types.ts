@@ -460,6 +460,8 @@ export interface StoredTurn {
   rating_note: string | null;
   /** Kept as a reference answer to re-check. */
   reference: boolean;
+  /** Values a re-check's answer must state (figures or text). */
+  expected: string[];
   created_at: string;
 }
 
@@ -470,6 +472,8 @@ export interface Recheck {
   after: Turn;
   queries_removed: string[];
   queries_added: string[];
+  /** The reference's expected values, checked against the new answer. */
+  expectations: { expected: string; met: boolean }[];
 }
 
 /** `recheck_turn_id` is set while a reference answer is being re-checked. */

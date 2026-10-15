@@ -156,6 +156,25 @@ fn matches(f: &Figure, source: f64) -> bool {
     (s * scale).round() == (f.value * scale).round() || (s - f.value).abs() <= 0.5 / scale
 }
 
+/// Figures written in `text` (amounts, percentages, large counts), as
+/// written, without repeats.
+pub fn figure_texts(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for f in figures(text) {
+        if !out.contains(&f.text) {
+            out.push(f.text);
+        }
+    }
+    out
+}
+
+/// Whether `answer` states the figure `expected` (like `$1,234.56` or
+/// `12.5%`), at any rounding. None when `expected` isn't one figure.
+pub fn states_figure(answer: &str, expected: &str) -> Option<bool> {
+    let [e] = figures(expected).try_into().ok()?;
+    Some(figures(answer).iter().any(|f| matches(f, e.value)))
+}
+
 /// Figures in `answer` that match no number in the sources.
 pub fn unverified(answer: &str, results: &[&Value], texts: &[&str]) -> Vec<String> {
     let mut known = Vec::new();
