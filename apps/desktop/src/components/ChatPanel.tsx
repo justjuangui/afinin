@@ -122,9 +122,24 @@ function inline(text: string, onCite: (n: number) => void): ReactNode[] {
   });
 }
 
+/** Cells of a `| a | b |` table row. */
+const cells = (line: string) =>
+  line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+
+const isTableRow = (line: string) => /^\s*\|.*\|\s*$/.test(line);
+const isTableRule = (line: string) => /^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*:?-*:?\s*\|?\s*$/.test(line);
+
+/** Block markdown subset: paragraphs, headings, bullet lists and tables. */
 function Markdown({ text, onCite }: { text: string; onCite: (n: number) => void }) {
   const blocks: ReactNode[] = [];
   let list: string[] = [];
+  let table: string[][] = [];
+  let header = false;
   const flush = () => {
     if (list.length) {
       blocks.push(
@@ -136,16 +151,56 @@ function Markdown({ text, onCite }: { text: string; onCite: (n: number) => void 
       );
       list = [];
     }
+    if (table.length) {
+      const head = header ? table[0] : null;
+      const body = header ? table.slice(1) : table;
+      blocks.push(
+        <div key={blocks.length} className="md-table">
+          <table>
+            {head && (
+              <thead>
+                <tr>
+                  {head.map((c, i) => (
+                    <th key={i}>{inline(c, onCite)}</th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            <tbody>
+              {body.map((row, r) => (
+                <tr key={r}>
+                  {row.map((c, i) => (
+                    <td key={i}>{inline(c, onCite)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      table = [];
+      header = false;
+    }
   };
-  for (const raw of text.split("\n")) {
-    const line = raw.trimEnd();
+  const lines = text.split("\n").map((l) => l.trimEnd());
+  lines.forEach((line, i) => {
+    if (isTableRow(line) || (table.length > 0 && isTableRule(line))) {
+      if (list.length) flush();
+      // The rule under the first row makes it a header.
+      if (isTableRule(line)) header = table.length === 1;
+      else table.push(cells(line));
+      return;
+    }
+    // Models sometimes leave blank lines between table rows.
+    if (table.length > 0 && !line.trim() && isTableRow(lines.slice(i + 1).find((l) => l.trim()) ?? "")) return;
     const bullet = /^\s*(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
     if (bullet) {
+      if (table.length) flush();
       list.push(bullet[1]);
-      continue;
+      return;
     }
     flush();
-    if (!line.trim()) continue;
+    if (!line.trim()) return;
     const heading = /^#{1,4}\s+(.*)$/.exec(line);
     blocks.push(
       heading ? (
@@ -154,7 +209,7 @@ function Markdown({ text, onCite }: { text: string; onCite: (n: number) => void 
         <p key={blocks.length}>{inline(line, onCite)}</p>
       ),
     );
-  }
+  });
   flush();
   return <div className="md">{blocks}</div>;
 }
