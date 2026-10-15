@@ -18,6 +18,16 @@ First feature-complete version (MVP, milestones M0–M6).
   transfer and Savings Plans / RI coverage; dismiss and snooze.
 - **Assistant** (optional): Ollama/OpenAI-compatible, Anthropic and Bedrock; read-only tools,
   cited figures, redaction, request log, "Explain this".
+- **Assistant quality and cost**: workspace context (accounts, tags, glossary, instructions;
+  versioned), current-screen awareness, saved and resumable conversations, ratings, reference
+  answers that guide similar questions and can be re-checked with expected values,
+  missing-data reports with fixes, unverified-figure warnings; per-answer traces (rounds, tool
+  calls, tokens, cache, latency) with waste warnings, Anthropic prompt caching, de-duplicated
+  tool calls, per-model prices, cost estimates and a monthly budget.
+- **Lightsail**: instances, databases, load balancers, disks and static IPs in the inventory and
+  graph, bundle list prices, and waste findings (unattached static IPs and disks, stopped
+  instances). The IAM policies gain the matching `lightsail:Get*` actions.
+- **Graph**: Flow and Network layouts, untagged-resource filter, minimap.
 - **Data**: encrypted local database, retention setting, password-encrypted backup and restore.
 - **Release**: signed auto-updates, installers for macOS, Linux and Windows, SBOMs, read-only
   IAM role as CloudFormation StackSet and Terraform module.

@@ -22,7 +22,8 @@ Status: **v0.1.0 (MVP), not yet released.** See [`CHANGELOG.md`](CHANGELOG.md) a
   data transfer, Savings Plans / RI coverage.
 - **Optional assistant**: ask questions in plain language with a local model or a cloud
   provider; answers cite Afinín's own figures and identifiers are masked before leaving your
-  machine.
+  machine. Teach it your business with a workspace context, check answers against references,
+  and see what each answer cost.
 
 Read-only, local-first, no telemetry. See [docs/setup.md](docs/setup.md) and
 [docs/privacy.md](docs/privacy.md).

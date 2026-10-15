@@ -7,7 +7,8 @@ Afinín is local-first: there is no Afinín backend and no telemetry.
 - **Credentials** (SSO tokens, API keys) live only in the OS keychain — macOS Keychain, Windows
   Credential Manager or the Linux Secret Service. They never enter the database, logs, backups or
   LLM requests.
-- **Data** (costs, inventory, findings, settings, assistant request log) is stored in a DuckDB
+- **Data** (costs, inventory, findings, settings, workspace context, saved assistant
+  conversations and request log) is stored in a DuckDB
   database encrypted at rest. Its key is generated on first run and kept in the keychain.
 - **CUR files** are downloaded to a temporary file, loaded into the encrypted database and
   deleted immediately.
@@ -28,7 +29,12 @@ tools Afinín runs locally receive the real values, and the answer you see has t
 Local servers (Ollama, LM Studio on `localhost`) are not redacted by default because nothing
 leaves your machine; you can change both defaults per provider.
 
-Every request is recorded exactly as sent: **Assistant → Show what was sent**.
+The workspace context you write (what accounts, tags and terms mean) and a description of the
+screen you are on are sent with each question, masked the same way.
+
+Every request is recorded exactly as sent: **Assistant → Show what was sent**, and **Trace**
+under an answer shows each request it took. Clearing the log deletes the requests and
+responses but keeps their token counts, so monthly usage and the budget still add up.
 
 The model never sees raw data dumps and never calculates figures: it calls read-only tools
 backed by Afinín's local query engine, and every number in an answer cites the tool result it
