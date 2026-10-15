@@ -93,11 +93,23 @@ impl Provider for Anthropic {
         tools: &'a [ToolSpec],
     ) -> BoxFuture<'a, Result<Reply>> {
         Box::pin(async move {
+            // Prompt caching: tools and system prompt are the same on every
+            // round, and each round resends the whole conversation, so mark
+            // the end of the system prompt and of the latest message. Later
+            // rounds read that prefix at a tenth of the input price.
+            let mut wire = to_wire(messages);
+            if let Some(last) = wire
+                .last_mut()
+                .and_then(|m| m["content"].as_array_mut())
+                .and_then(|c| c.last_mut())
+            {
+                last["cache_control"] = json!({"type": "ephemeral"});
+            }
             let mut request = json!({
                 "model": self.model,
                 "max_tokens": 16000,
-                "system": system,
-                "messages": to_wire(messages),
+                "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                "messages": wire,
                 "tools": tools.iter().map(|t| json!({
                     "name": t.name, "description": t.description, "input_schema": t.schema
                 })).collect::<Vec<_>>(),
@@ -156,6 +168,14 @@ impl Provider for Anthropic {
                     .unwrap_or(0),
                 output_tokens: body
                     .pointer("/usage/output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cache_read_tokens: body
+                    .pointer("/usage/cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cache_write_tokens: body
+                    .pointer("/usage/cache_creation_input_tokens")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0),
                 request_json: request,

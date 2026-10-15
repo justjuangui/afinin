@@ -253,6 +253,12 @@ impl Provider for Bedrock {
                 model: self.model.clone(),
                 input_tokens: usage.map(|u| u.input_tokens().max(0) as u64).unwrap_or(0),
                 output_tokens: usage.map(|u| u.output_tokens().max(0) as u64).unwrap_or(0),
+                cache_read_tokens: usage
+                    .and_then(|u| u.cache_read_input_tokens())
+                    .map_or(0, |t| t.max(0) as u64),
+                cache_write_tokens: usage
+                    .and_then(|u| u.cache_write_input_tokens())
+                    .map_or(0, |t| t.max(0) as u64),
                 request_json,
                 response_json: json!({"stopReason": out.stop_reason().as_str(), "content": response_content}),
             })

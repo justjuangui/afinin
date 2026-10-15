@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { navLinks } from "../assistantNav";
-import { relativeTime } from "../format";
+import { duration, relativeTime, tokens, usd } from "../format";
 import type {
   AssistantProgress,
   Citation,
@@ -20,6 +20,7 @@ import type {
 import { Callout } from "./Callout";
 import { ConfirmDialog, Modal } from "./Modal";
 import { ReferenceChecks } from "./ReferenceChecks";
+import { TraceDialog } from "./TraceDialog";
 
 interface Entry {
   role: "user" | "assistant";
@@ -165,6 +166,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [citation, setCitation] = useState<Citation | null>(null);
+  const [trace, setTrace] = useState<Turn | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [steps, setSteps] = useState<string[]>([]);
@@ -345,6 +347,18 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
                       ` · guided by ${e.turn.reference_examples} reference answer${e.turn.reference_examples === 1 ? "" : "s"}`}
                     {e.turn.redacted ? ` · ${e.turn.masked_values} identifiers masked` : " · not redacted (local model)"}
                     {e.turn.citations.length > 0 && ` · ${e.turn.citations.length} data source(s)`}
+                    {e.turn.rounds.length > 0 && ` · ${duration(e.turn.elapsed_ms)}`}
+                    {e.turn.cost_usd != null && ` · ${usd(e.turn.cost_usd)}`}
+                    {" · "}
+                    <button className="link small" onClick={() => setTrace(e.turn ?? null)}>
+                      Trace
+                    </button>
+                    {e.turn.flags.length > 0 && (
+                      <span className="warn-text">
+                        {" "}
+                        ({e.turn.flags.length} cost warning{e.turn.flags.length === 1 ? "" : "s"})
+                      </span>
+                    )}
                   </div>
                 )}
               </>
@@ -456,6 +470,7 @@ export function ChatPanel({ workspaceId, prompt, onClose, onOpenSettings, onOpen
           }}
         />
       )}
+      {trace && <TraceDialog turn={trace} workspaceId={workspaceId} onClose={() => setTrace(null)} />}
       {showLog && <LlmLogDialog workspaceId={workspaceId} onClose={() => setShowLog(false)} />}
     </aside>
   );
@@ -502,7 +517,8 @@ function LlmLogDialog({ workspaceId, onClose }: { workspaceId: string; onClose: 
         </Callout>
       )}
       <p className="muted small">
-        Stored only in Afinín&apos;s encrypted local database. API keys are never logged.
+        Stored only in Afinín&apos;s encrypted local database. API keys are never logged. Clearing keeps token counts
+        for usage and the budget.
       </p>
       {entries?.length === 0 && <p className="muted">No requests yet.</p>}
       <ul className="log">
@@ -515,7 +531,10 @@ function LlmLogDialog({ workspaceId, onClose }: { workspaceId: string; onClose: 
               </span>
               <span className={e.redacted ? "badge ok" : "badge warn"}>{e.redacted ? "redacted" : "not redacted"}</span>
               <span className="muted small">
-                {e.input_tokens}+{e.output_tokens} tokens
+                {e.round != null && `round ${e.round} · `}
+                {tokens(e.input_tokens + e.cache_read_tokens + e.cache_write_tokens)} in
+                {e.cache_read_tokens > 0 && ` (${tokens(e.cache_read_tokens)} cached)`} · {tokens(e.output_tokens)} out
+                {e.latency_ms != null && ` · ${duration(e.latency_ms)}`}
               </span>
             </button>
             {open === e.id && (

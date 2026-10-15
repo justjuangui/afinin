@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::findings::Sensitivity;
 use crate::llm::LlmSettings;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Hours between automatic syncs; 0 disables background sync (FR-50).

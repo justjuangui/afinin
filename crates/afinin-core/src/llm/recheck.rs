@@ -4,10 +4,10 @@
 //! current data and context, compared with the saved answer.
 
 use serde::Serialize;
-use serde_json::Value;
 
 use super::agent::{Citation, Turn};
 use super::tools::describe;
+use super::trace::call_key;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Recheck {
@@ -23,26 +23,8 @@ pub struct Recheck {
     pub queries_added: Vec<String>,
 }
 
-/// JSON with object keys sorted, so equal inputs compare equal whatever
-/// order the model wrote them in.
-fn canonical(v: &Value) -> Value {
-    match v {
-        Value::Object(o) => {
-            let mut keys: Vec<&String> = o.keys().collect();
-            keys.sort();
-            Value::Object(
-                keys.into_iter()
-                    .map(|k| (k.clone(), canonical(&o[k])))
-                    .collect(),
-            )
-        }
-        Value::Array(a) => Value::Array(a.iter().map(canonical).collect()),
-        other => other.clone(),
-    }
-}
-
 fn key(c: &Citation) -> String {
-    format!("{}:{}", c.tool, canonical(&c.input))
+    call_key(&c.tool, &c.input)
 }
 
 /// Queries only in `before` and only in `after`, as readable labels.
@@ -67,15 +49,15 @@ pub fn compare_queries(before: &[Citation], after: &[Citation]) -> (Vec<String>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn cite(tool: &str, input: Value) -> Citation {
         Citation {
             n: 1,
             tool: tool.into(),
             input,
-            result: Value::Null,
             ok: true,
+            ..Default::default()
         }
     }
 

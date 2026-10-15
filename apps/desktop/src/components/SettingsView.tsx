@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { money } from "../format";
+import { money, usd } from "../format";
 import { ConfirmDialog } from "./Modal";
-import type { Account, ApiUsage, CostMetric, LlmSettings, LlmUsage, ProviderKind, Settings } from "../types";
+import type { Account, ApiUsage, CostMetric, LlmSettings, LlmUsage, ProviderKind, Settings, TokenPrice } from "../types";
 import { Callout } from "./Callout";
 
 const PROVIDERS: { id: ProviderKind; label: string }[] = [
@@ -15,6 +15,19 @@ const PROVIDERS: { id: ProviderKind; label: string }[] = [
 ];
 
 /** Mirrors `LlmSettings::is_local` in the core. */
+/** The model each provider uses when none is entered (as the core does). */
+const DEFAULT_MODEL: Record<Exclude<ProviderKind, "none">, string> = {
+  anthropic: "claude-opus-5-5",
+  bedrock: "anthropic.claude-opus-5-5",
+  open_ai_compatible: "llama3.1",
+};
+
+/** A price or budget field: empty or invalid means not set. */
+function amount(value: string): number | null {
+  const n = Number(value);
+  return value.trim() === "" || !Number.isFinite(n) || n < 0 ? null : n;
+}
+
 function isLocal(llm: LlmSettings): boolean {
   if (llm.provider !== "open_ai_compatible") return false;
   try {
@@ -307,13 +320,7 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
               <label>
                 Model
                 <input
-                  placeholder={
-                    llm.provider === "anthropic"
-                      ? "claude-opus-5-5"
-                      : llm.provider === "bedrock"
-                        ? "anthropic.claude-opus-5-5"
-                        : "llama3.1"
-                  }
+                  placeholder={DEFAULT_MODEL[llm.provider]}
                   value={llm.model}
                   onChange={(e) => setLlm({ model: e.target.value })}
                 />
@@ -351,6 +358,32 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
                   : "Cloud provider: masking is on by default. The answer you see has the real values restored."}{" "}
                 Every request is logged locally (Assistant → Show what was sent).
               </span>
+              <PriceFields
+                model={llm.model.trim() || DEFAULT_MODEL[llm.provider]}
+                price={llm.prices[llm.model.trim() || DEFAULT_MODEL[llm.provider]]}
+                onChange={(model, price) => {
+                  const prices = { ...llm.prices };
+                  if (price) prices[model] = price;
+                  else delete prices[model];
+                  setLlm({ prices });
+                }}
+              />
+              <label>
+                Monthly budget (USD)
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  inputMode="decimal"
+                  placeholder="No limit"
+                  value={llm.monthly_budget_usd ?? ""}
+                  onChange={(e) => setLlm({ monthly_budget_usd: amount(e.target.value) })}
+                />
+                <span className="hint">
+                  The assistant stops answering once this month&apos;s estimated cost reaches it. Needs the model&apos;s
+                  price.
+                </span>
+              </label>
             </>
           )}
 
@@ -463,8 +496,8 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
           <section className="panel settings">
             <h2>Assistant usage this month</h2>
             <p className="muted small">
-              Tokens sent to and received from each model, from the request log (clearing the log resets these). Prices
-              differ by provider and plan; Bedrock usage is billed on your AWS bill as Amazon Bedrock.
+              Tokens sent to and received from each model, from the request log (clearing the log keeps these counts).
+              Costs are estimates from the prices above; Bedrock usage is billed on your AWS bill as Amazon Bedrock.
             </p>
             {llmUsage && llmUsage.length === 0 && <p className="muted">No assistant requests yet this month.</p>}
             {llmUsage && llmUsage.length > 0 && (
@@ -474,7 +507,9 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
                     <th>Model</th>
                     <th className="num">Requests</th>
                     <th className="num">Input tokens</th>
+                    <th className="num">From cache</th>
                     <th className="num">Output tokens</th>
+                    <th className="num">Cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -484,10 +519,29 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
                         {u.model} <span className="muted small">{u.provider}</span>
                       </td>
                       <td className="num">{u.requests.toLocaleString()}</td>
-                      <td className="num">{u.input_tokens.toLocaleString()}</td>
+                      <td className="num">
+                        {(u.input_tokens + u.cache_read_tokens + u.cache_write_tokens).toLocaleString()}
+                      </td>
+                      <td className="num">{cacheShare(u)}</td>
                       <td className="num">{u.output_tokens.toLocaleString()}</td>
+                      <td className="num">{u.cost_usd != null ? usd(u.cost_usd) : <span className="muted">no price</span>}</td>
                     </tr>
                   ))}
+                  {llmUsage.some((u) => u.cost_usd != null) && (
+                    <tr className="total">
+                      <td>Total</td>
+                      <td className="num">{llmUsage.reduce((s, u) => s + u.requests, 0).toLocaleString()}</td>
+                      <td />
+                      <td />
+                      <td />
+                      <td className="num">
+                        {usd(llmUsage.reduce((s, u) => s + (u.cost_usd ?? 0), 0))}
+                        {llm.monthly_budget_usd != null && (
+                          <span className="muted small"> of {usd(llm.monthly_budget_usd)}</span>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             )}
@@ -495,5 +549,60 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
         </div>
       </div>
     </main>
+  );
+}
+
+function cacheShare(u: LlmUsage): string {
+  const all = u.input_tokens + u.cache_read_tokens + u.cache_write_tokens;
+  return all > 0 ? `${Math.round((u.cache_read_tokens / all) * 100)}%` : "—";
+}
+
+/** The model's price per million tokens, for cost estimates. */
+function PriceFields({
+  model,
+  price,
+  onChange,
+}: {
+  model: string;
+  price: TokenPrice | undefined;
+  onChange: (model: string, price: TokenPrice | null) => void;
+}) {
+  const current: TokenPrice = price ?? { input: 0, output: 0, cache_read: null, cache_write: null };
+  const set = (patch: Partial<TokenPrice>) => {
+    const next = { ...current, ...patch };
+    const empty = !next.input && !next.output && next.cache_read == null && next.cache_write == null;
+    onChange(model, empty ? null : next);
+  };
+  const field = (label: string, value: number | null, placeholder: string, patch: (v: number | null) => Partial<TokenPrice>) => (
+    <label>
+      {label}
+      <input
+        type="number"
+        min="0"
+        step="any"
+        inputMode="decimal"
+        placeholder={placeholder}
+        // Zero is the same as not set.
+        value={value || ""}
+        onChange={(e) => set(patch(amount(e.target.value)))}
+      />
+    </label>
+  );
+  return (
+    <fieldset className="price-fields">
+      <legend>
+        Price of <code>{model}</code>, USD per million tokens
+      </legend>
+      <div className="form-grid">
+        {field("Input", current.input, "e.g. 5", (v) => ({ input: v ?? 0 }))}
+        {field("Output", current.output, "e.g. 25", (v) => ({ output: v ?? 0 }))}
+        {field("Cache read", current.cache_read, current.input ? String(+(current.input * 0.1).toFixed(4)) : "0.1 × input", (v) => ({ cache_read: v }))}
+        {field("Cache write", current.cache_write, current.input ? String(+(current.input * 1.25).toFixed(4)) : "1.25 × input", (v) => ({ cache_write: v }))}
+      </div>
+      <span className="hint">
+        From your provider&apos;s pricing page; used only for the cost estimates in traces, usage and the budget. Leave empty
+        for local models.
+      </span>
+    </fieldset>
   );
 }

@@ -338,6 +338,18 @@ export interface LlmSettings {
   redact: boolean | null;
   bedrock_account_id: string | null;
   bedrock_region: string;
+  /** Prices by model ID, USD per million tokens. */
+  prices: Record<string, TokenPrice>;
+  /** Stop asking once this month's estimated assistant cost reaches it. */
+  monthly_budget_usd: number | null;
+}
+
+/** USD per million tokens. Cache prices default to 0.1× / 1.25× input. */
+export interface TokenPrice {
+  input: number;
+  output: number;
+  cache_read: number | null;
+  cache_write: number | null;
 }
 
 export interface Citation {
@@ -346,7 +358,35 @@ export interface Citation {
   input: Record<string, unknown>;
   result: unknown;
   ok: boolean;
+  /** What the call did, in words; empty for answers saved before traces. */
+  label: string;
+  /** Time running the tool locally. */
+  ms: number;
+  /** Size of the result as sent to the model, in characters. */
+  sent_chars: number;
+  /** Same call as this earlier source: not run again, the model got a pointer. */
+  duplicate_of: number | null;
 }
+
+/** One request to the model within an answer. */
+export interface Round {
+  n: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  ms: number;
+  stop: string;
+  sources: number[];
+  log_id: number | null;
+  cost_usd: number | null;
+}
+
+export type TraceFlag =
+  | { kind: "repeated_call"; label: string; times: number }
+  | { kind: "round_limit"; rounds: number }
+  | { kind: "tool_errors"; count: number }
+  | { kind: "large_result"; source: number; tokens: number };
 
 export interface Turn {
   conversation_id: string;
@@ -356,8 +396,17 @@ export interface Turn {
   model: string;
   redacted: boolean;
   masked_values: number;
+  /** Input tokens at the full rate (excludes cache reads and writes), all rounds. */
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  rounds: Round[];
+  /** Patterns in the trace that cost tokens for little gain. */
+  flags: TraceFlag[];
+  /** Estimated from the model's price in Settings. */
+  cost_usd: number | null;
+  elapsed_ms: number;
   /** How the question was interpreted, from the tool calls. */
   assumptions: string[];
   /** Workspace context revision sent with the question (0 = none). */
@@ -387,6 +436,9 @@ export interface LlmUsage {
   requests: number;
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number | null;
 }
 
 export type Rating = "up" | "down";
@@ -483,5 +535,10 @@ export interface LlmLogEntry {
   response: string;
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  /** Round within its answer; null for older entries. */
+  round: number | null;
+  latency_ms: number | null;
   created_at: string;
 }

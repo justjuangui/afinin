@@ -436,11 +436,23 @@ impl Afinin {
         ))
     }
 
-    /// Billable AWS calls made by Afinín this calendar month (NFR-30).
-    /// Assistant requests this month, per provider and model (from the request log).
+    /// Assistant requests this month, per provider and model (from the
+    /// request log), with estimated costs where the model has a price.
     pub fn llm_usage_this_month(&self) -> Result<Vec<LlmUsage>> {
+        let cfg = self.settings()?.llm;
         let month_start = cost::dates::first_of_month(cost::dates::today_utc());
-        self.db().llm_usage(&cost::dates::format(month_start))
+        let mut usage = self.db().llm_usage(&cost::dates::format(month_start))?;
+        for u in &mut usage {
+            u.cost_usd = cfg.price(&u.model).map(|p| {
+                p.cost(
+                    u.input_tokens as u64,
+                    u.output_tokens as u64,
+                    u.cache_read_tokens as u64,
+                    u.cache_write_tokens as u64,
+                )
+            });
+        }
+        Ok(usage)
     }
 
     /// Saved answers that reported missing data, newest first.
@@ -448,6 +460,7 @@ impl Afinin {
         self.db().assistant_gaps(workspace_id, 50)
     }
 
+    /// Billable AWS calls made by Afinín this calendar month (NFR-30).
     pub fn api_usage_this_month(&self) -> Result<Vec<ApiUsage>> {
         let month_start = cost::dates::first_of_month(cost::dates::today_utc());
         self.db().api_usage(&cost::dates::format(month_start))
@@ -1115,6 +1128,18 @@ impl Afinin {
         save: bool,
     ) -> Result<Turn> {
         let cfg = self.settings()?.llm;
+        if let Some(budget) = cfg.monthly_budget_usd.filter(|b| *b > 0.0) {
+            let spent: f64 = self
+                .llm_usage_this_month()?
+                .iter()
+                .filter_map(|u| u.cost_usd)
+                .sum();
+            if spent >= budget {
+                return Err(Error::Other(format!(
+                    "This month's assistant budget (${budget:.2}) is used up: about ${spent:.2} so far.                      Raise it in Settings → Assistant, or wait for next month."
+                )));
+            }
+        }
         let provider = self.llm_provider(&cfg).await?;
         let existing = conversation_id.and_then(|id| {
             self.conversations
@@ -1183,17 +1208,26 @@ impl Afinin {
             question,
             &system,
             |name, input| llm::tools::execute(self, workspace_id, name, input),
-            |reply| {
-                let _ = self.db().log_llm_request(
-                    workspace_id,
-                    &conv_id,
-                    &provider_name,
-                    &reply.model,
-                    redacted,
-                    &serde_json::to_string_pretty(&reply.request_json).unwrap_or_default(),
-                    &serde_json::to_string_pretty(&reply.response_json).unwrap_or_default(),
-                    (reply.input_tokens, reply.output_tokens),
-                );
+            |reply, round, latency_ms| {
+                let request = serde_json::to_string_pretty(&reply.request_json).unwrap_or_default();
+                let response = serde_json::to_string_pretty(&reply.response_json).unwrap_or_default();
+                self.db()
+                    .log_llm_request(&storage::LoggedRequest {
+                        workspace_id,
+                        conversation_id: &conv_id,
+                        provider: &provider_name,
+                        model: &reply.model,
+                        redacted,
+                        request: &request,
+                        response: &response,
+                        input_tokens: reply.input_tokens,
+                        output_tokens: reply.output_tokens,
+                        cache_read_tokens: reply.cache_read_tokens,
+                        cache_write_tokens: reply.cache_write_tokens,
+                        round,
+                        latency_ms,
+                    })
+                    .ok()
             },
             on_progress,
         )
@@ -1201,6 +1235,17 @@ impl Afinin {
         .map(|mut turn| {
             turn.missing_data = llm::tools::take_missing_data(&mut turn.citations);
             turn.reference_examples = reference_examples;
+            if let Some(price) = cfg.price(&turn.model) {
+                for r in &mut turn.rounds {
+                    r.cost_usd = Some(price.cost(
+                        r.input_tokens,
+                        r.output_tokens,
+                        r.cache_read_tokens,
+                        r.cache_write_tokens,
+                    ));
+                }
+                turn.cost_usd = Some(turn.rounds.iter().filter_map(|r| r.cost_usd).sum());
+            }
             turn.assumptions = llm::tools::assumptions(&turn.citations);
             if !context.is_empty() {
                 turn.context_revision = context_revision;
@@ -1298,6 +1343,13 @@ impl Afinin {
 
     pub fn llm_log(&self, workspace_id: &str, limit: usize) -> Result<Vec<LlmLogEntry>> {
         self.db().llm_log(workspace_id, limit)
+    }
+
+    /// One logged request, for the trace of an answer.
+    pub fn llm_log_entry(&self, workspace_id: &str, id: i64) -> Result<LlmLogEntry> {
+        self.db()
+            .llm_log_entry(workspace_id, id)?
+            .ok_or_else(|| Error::NotFound(format!("request {id}")))
     }
 
     pub fn clear_llm_log(&self, workspace_id: &str) -> Result<()> {

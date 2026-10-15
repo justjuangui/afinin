@@ -14,8 +14,10 @@ pub mod providers;
 pub mod recheck;
 pub mod redact;
 pub mod tools;
+pub mod trace;
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
@@ -36,7 +38,31 @@ pub enum ProviderKind {
     Bedrock,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A model's price in USD per million tokens, as entered in Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TokenPrice {
+    pub input: f64,
+    pub output: f64,
+    /// Prompt cache reads; a tenth of `input` when not set (Anthropic, Bedrock).
+    pub cache_read: Option<f64>,
+    /// Prompt cache writes; 1.25 × `input` when not set (Anthropic, Bedrock).
+    pub cache_write: Option<f64>,
+}
+
+impl TokenPrice {
+    pub fn cost(&self, input: u64, output: u64, cache_read: u64, cache_write: u64) -> f64 {
+        let read = self.cache_read.unwrap_or(self.input * 0.1);
+        let write = self.cache_write.unwrap_or(self.input * 1.25);
+        (input as f64 * self.input
+            + output as f64 * self.output
+            + cache_read as f64 * read
+            + cache_write as f64 * write)
+            / 1e6
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmSettings {
     pub provider: ProviderKind,
@@ -49,6 +75,10 @@ pub struct LlmSettings {
     /// Bedrock: connected account whose credentials call Bedrock.
     pub bedrock_account_id: Option<String>,
     pub bedrock_region: String,
+    /// Prices by model ID, for cost estimates.
+    pub prices: BTreeMap<String, TokenPrice>,
+    /// Stop asking once this month's estimated assistant cost reaches it.
+    pub monthly_budget_usd: Option<f64>,
 }
 
 impl Default for LlmSettings {
@@ -60,6 +90,8 @@ impl Default for LlmSettings {
             redact: None,
             bedrock_account_id: None,
             bedrock_region: "us-east-1".into(),
+            prices: BTreeMap::new(),
+            monthly_budget_usd: None,
         }
     }
 }
@@ -99,6 +131,17 @@ impl LlmSettings {
 
     pub fn redaction_enabled(&self) -> bool {
         self.redact.unwrap_or(!self.is_local())
+    }
+
+    /// The price for a model as a provider reports it. Providers may answer
+    /// with a dated ID (`claude-x-20260901`), so the longest priced ID it
+    /// starts with also counts. Zero prices count as not set.
+    pub fn price(&self, model: &str) -> Option<TokenPrice> {
+        self.prices
+            .iter()
+            .filter(|(id, p)| model.starts_with(id.as_str()) && (p.input > 0.0 || p.output > 0.0))
+            .max_by_key(|(id, _)| id.len())
+            .map(|(_, p)| *p)
     }
 }
 
@@ -165,7 +208,7 @@ pub struct ToolSpec {
     pub schema: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     EndTurn,
@@ -173,6 +216,7 @@ pub enum StopReason {
     MaxTokens,
     /// The model declined (safety classifiers).
     Refusal,
+    #[default]
     Other,
 }
 
@@ -181,8 +225,11 @@ pub struct Reply {
     pub blocks: Vec<Block>,
     pub stop: StopReason,
     pub model: String,
+    /// Input tokens billed at the full rate: excludes cache reads and writes.
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
     /// Exactly what was sent and received, for the local request log (FR-45).
     pub request_json: serde_json::Value,
     pub response_json: serde_json::Value,
@@ -197,4 +244,27 @@ pub trait Provider: Send + Sync {
     ) -> BoxFuture<'a, Result<Reply>>;
     fn kind(&self) -> ProviderKind;
     fn model(&self) -> &str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prices_match_dated_model_ids_and_cost_cache_tokens_less() {
+        let mut cfg = LlmSettings::default();
+        let price = TokenPrice {
+            input: 5.0,
+            output: 25.0,
+            ..Default::default()
+        };
+        cfg.prices.insert("claude-x".into(), price);
+        cfg.prices.insert("unpriced".into(), TokenPrice::default());
+        assert_eq!(cfg.price("claude-x-20260901"), Some(price));
+        assert_eq!(cfg.price("unpriced"), None);
+        assert_eq!(cfg.price("other"), None);
+        // 1M uncached in, 1M out, 1M cache reads (0.5), 1M cache writes (6.25).
+        let cost = price.cost(1_000_000, 1_000_000, 1_000_000, 1_000_000);
+        assert!((cost - 36.75).abs() < 1e-9, "{cost}");
+    }
 }

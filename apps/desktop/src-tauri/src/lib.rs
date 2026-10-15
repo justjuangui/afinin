@@ -648,6 +648,15 @@ async fn llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<
 }
 
 #[tauri::command]
+async fn llm_log_entry(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    id: i64,
+) -> CmdResult<LlmLogEntry> {
+    blocking(&state, move |core| core.llm_log_entry(&workspace_id, id)).await
+}
+
+#[tauri::command]
 async fn clear_llm_log(state: State<'_, AppState>, workspace_id: String) -> CmdResult<()> {
     blocking(&state, move |core| core.clear_llm_log(&workspace_id)).await
 }
@@ -822,6 +831,7 @@ pub fn run() {
             set_llm_api_key,
             has_llm_api_key,
             llm_log,
+            llm_log_entry,
             clear_llm_log,
             assistant_conversations,
             assistant_turns,
