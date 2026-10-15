@@ -68,7 +68,7 @@ pub fn render(examples: &[&StoredTurn]) -> String {
                 .turn
                 .citations
                 .iter()
-                .filter(|c| c.ok)
+                .filter(|c| c.ok && c.duplicate_of.is_none())
                 .map(|c| format!("- {} {}", c.tool, compact(&c.input)))
                 .collect();
             format!(
@@ -106,6 +106,7 @@ mod tests {
                     input: json!({"group_by": "service", "start": "2026-09-01", "end": "2026-10-01"}),
                     result: json!({"total": 120.5}),
                     ok: true,
+                    ..Default::default()
                 }],
                 stop: StopReason::EndTurn,
                 model: "m".into(),
@@ -120,6 +121,7 @@ mod tests {
                 data_as_of: None,
                 missing_data: Vec::new(),
                 reference_examples: 0,
+                ..Default::default()
             },
             rating: None,
             rating_note: None,

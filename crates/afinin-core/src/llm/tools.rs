@@ -564,6 +564,7 @@ mod tests {
             input,
             result,
             ok: true,
+            ..Default::default()
         }
     }
 

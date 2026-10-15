@@ -570,3 +570,17 @@ pre.code.tall { max-height: 320px; overflow: auto; }
 .toasts { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 30; width: min(460px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; }
 .toasts .callout { box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); }
 button.small { padding: 3px 9px; font-size: 12px; }
+
+/* Answer trace */
+.trace-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.trace-stat { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.trace-stat strong { font-variant-numeric: tabular-nums; }
+.trace-rounds { display: flex; flex-direction: column; gap: 8px; }
+.trace-round { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.trace-round-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.trace-round-head button { margin-left: auto; }
+.trace-tokens { margin: 0; font-variant-numeric: tabular-nums; }
+.trace-tools { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.trace-error { color: var(--danger); }
+.price-fields { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px 12px; margin: 4px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.price-fields legend { font-size: 13px; padding: 0 4px; }

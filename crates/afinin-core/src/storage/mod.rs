@@ -262,6 +262,13 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE assistant_turns ADD COLUMN is_reference BOOLEAN DEFAULT false;
     ALTER TABLE assistant_turns ADD COLUMN screen TEXT;
     "#,
+    // v11: per-request trace: which round of an answer, time and prompt cache use.
+    r#"
+    ALTER TABLE llm_log ADD COLUMN turn_round INTEGER;
+    ALTER TABLE llm_log ADD COLUMN latency_ms BIGINT;
+    ALTER TABLE llm_log ADD COLUMN cache_read_tokens BIGINT DEFAULT 0;
+    ALTER TABLE llm_log ADD COLUMN cache_write_tokens BIGINT DEFAULT 0;
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
@@ -298,6 +305,7 @@ pub use cur::CurStatus;
 pub use findings::PRICE_TTL_DAYS;
 pub use inventory::InventoryScan;
 pub use llm::{LlmLogEntry, LlmUsage};
+pub(crate) use llm::LoggedRequest;
 
 pub struct Storage {
     conn: Connection,

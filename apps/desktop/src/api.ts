@@ -112,6 +112,7 @@ export const api = {
   setLlmApiKey: (key: string | null) => invoke<void>("set_llm_api_key", { key }),
   hasLlmApiKey: () => invoke<boolean>("has_llm_api_key"),
   llmLog: (workspaceId: string) => invoke<LlmLogEntry[]>("llm_log", { workspaceId }),
+  llmLogEntry: (workspaceId: string, id: number) => invoke<LlmLogEntry>("llm_log_entry", { workspaceId, id }),
   clearLlmLog: (workspaceId: string) => invoke<void>("clear_llm_log", { workspaceId }),
   assistantConversations: (workspaceId: string) =>
     invoke<ConversationSummary[]>("assistant_conversations", { workspaceId }),

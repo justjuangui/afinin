@@ -39,3 +39,21 @@ export function periodLabel(period: string, granularity: "daily" | "monthly"): s
     ...(granularity === "monthly" ? { month: "short", year: "2-digit" } : { month: "short", day: "numeric" }),
   }).format(d);
 }
+
+/** Token counts: 950, 12.3k, 1.2M. */
+export function tokens(n: number): string {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+}
+
+/** Small USD amounts keep their cents' fractions: $0.0042, $0.12, $3.40. */
+export function usd(value: number): string {
+  const digits = value > 0 && value < 0.01 ? 4 : value < 1 ? 3 : 2;
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: digits }).format(
+    value,
+  );
+}
+
+/** Milliseconds as 850 ms or 4.2 s. */
+export function duration(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}

@@ -148,18 +148,18 @@ impl Provider for OpenAiCompatible {
                 Some("content_filter") => StopReason::Refusal,
                 _ => StopReason::EndTurn,
             };
+            // prompt_tokens includes cached tokens; report them apart, as
+            // the other providers do.
+            let tokens = |path: &str| body.pointer(path).and_then(|v| v.as_u64()).unwrap_or(0);
+            let cached = tokens("/usage/prompt_tokens_details/cached_tokens");
             Ok(Reply {
                 blocks,
                 stop,
                 model: body["model"].as_str().unwrap_or(&self.model).to_owned(),
-                input_tokens: body
-                    .pointer("/usage/prompt_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                output_tokens: body
-                    .pointer("/usage/completion_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
+                input_tokens: tokens("/usage/prompt_tokens").saturating_sub(cached),
+                cache_read_tokens: cached,
+                cache_write_tokens: 0,
+                output_tokens: tokens("/usage/completion_tokens"),
                 request_json: request,
                 response_json: body,
             })

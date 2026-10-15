@@ -7,11 +7,12 @@ use serde_json::{Value, json};
 
 use super::context::AWS_BILLING_NOTES;
 use super::redact::Redactor;
+use super::trace::{self, Round, TraceFlag};
 use super::{Block, Message, Provider, Reply, Role, StopReason, ToolSpec};
 use crate::error::Result;
 
 /// Tool rounds per user message before giving up.
-const MAX_ROUNDS: usize = 8;
+pub const MAX_ROUNDS: usize = 8;
 
 /// A conversation with one provider. History is append-only.
 pub struct Conversation {
@@ -22,16 +23,29 @@ pub struct Conversation {
 }
 
 /// A tool call the answer can cite as `[n]` (FR-46). Stored unmasked for the UI.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Citation {
     pub n: usize,
     pub tool: String,
     pub input: Value,
     pub result: Value,
     pub ok: bool,
+    /// What the call did, in words ("Querying costs by service, …").
+    #[serde(default)]
+    pub label: String,
+    /// Time running the tool locally.
+    #[serde(default)]
+    pub ms: u64,
+    /// Size of the result as sent to the model, in characters.
+    #[serde(default)]
+    pub sent_chars: usize,
+    /// Same call as this earlier source in the answer: not run again, and the
+    /// model was pointed at the earlier result instead of receiving it twice.
+    #[serde(default)]
+    pub duplicate_of: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
     pub conversation_id: String,
     /// Answer with identifiers restored.
@@ -42,8 +56,28 @@ pub struct Turn {
     pub redacted: bool,
     /// Distinct identifiers masked so far in this conversation.
     pub masked_values: usize,
+    /// Input tokens billed at the full rate, all rounds.
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Input tokens read from the provider's prompt cache, all rounds.
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    /// Input tokens written to the provider's prompt cache, all rounds.
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+    /// Each request to the model, in order.
+    #[serde(default)]
+    pub rounds: Vec<Round>,
+    /// Patterns in the trace that cost tokens for little gain.
+    #[serde(default)]
+    pub flags: Vec<TraceFlag>,
+    /// Estimated cost in USD from the model's price in Settings; None
+    /// without a price.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
+    /// Wall-clock time to answer.
+    #[serde(default)]
+    pub elapsed_ms: u64,
     /// How the question was interpreted (period, metric, data source), taken
     /// from the tool calls rather than the model's prose.
     pub assumptions: Vec<String>,
@@ -176,7 +210,8 @@ pub fn system_prompt(p: &PromptContext<'_>) -> String {
 }
 
 /// Runs one user turn: asks the model, executes its tool calls locally, and
-/// repeats until it answers.
+/// repeats until it answers. `log` records each request and returns its log
+/// entry id; it gets the 1-based round and the time spent waiting.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_turn(
     provider: &dyn Provider,
@@ -185,21 +220,34 @@ pub async fn run_turn(
     user_text: &str,
     system: &str,
     mut execute: impl FnMut(&str, &Value) -> Result<Value>,
-    mut log: impl FnMut(&Reply),
+    mut log: impl FnMut(&Reply, usize, u64) -> Option<i64>,
     mut progress: impl FnMut(Progress),
 ) -> Result<Turn> {
     let masked = conv.redactor.mask(user_text);
     conv.messages.push(Message::user_text(masked));
 
+    let started = std::time::Instant::now();
     let first_citation = conv.citations.len();
-    let (mut input_tokens, mut output_tokens) = (0, 0);
+    let mut rounds: Vec<Round> = Vec::new();
     let mut model = provider.model().to_owned();
     for round in 0..MAX_ROUNDS {
         progress(Progress::Thinking { round });
+        let waited = std::time::Instant::now();
         let reply = provider.complete(system, &conv.messages, tools).await?;
-        log(&reply);
-        input_tokens += reply.input_tokens;
-        output_tokens += reply.output_tokens;
+        let ms = waited.elapsed().as_millis() as u64;
+        let log_id = log(&reply, round + 1, ms);
+        rounds.push(Round {
+            n: round + 1,
+            input_tokens: reply.input_tokens,
+            output_tokens: reply.output_tokens,
+            cache_read_tokens: reply.cache_read_tokens,
+            cache_write_tokens: reply.cache_write_tokens,
+            ms,
+            stop: reply.stop,
+            sources: Vec::new(),
+            log_id,
+            cost_usd: None,
+        });
         model = reply.model.clone();
         let calls: Vec<(String, String, Value)> = reply
             .blocks
@@ -238,45 +286,54 @@ pub async fn run_turn(
                 StopReason::MaxTokens => answer.push_str("\n\n_(The answer was cut off at the model's length limit.)_"),
                 _ => {}
             }
-            return Ok(Turn {
-                conversation_id: conv.id.clone(),
-                answer,
-                citations: conv.citations[first_citation..].to_vec(),
-                stop: reply.stop,
-                model,
-                redacted: conv.redactor.enabled(),
-                masked_values: conv.redactor.masked_count(),
-                input_tokens,
-                output_tokens,
-                assumptions: Vec::new(),
-                context_revision: 0,
-                unverified_figures: Vec::new(),
-                turn_id: None,
-                data_as_of: None,
-                missing_data: Vec::new(),
-                reference_examples: 0,
-            });
+            return Ok(finish(conv, first_citation, answer, reply.stop, model, rounds, started));
         }
 
         // All results go back in a single user message.
         let mut results = Vec::new();
         for (id, name, input) in calls {
             let input = conv.redactor.unmask_json(&input);
-            progress(Progress::Tool {
-                label: super::tools::describe(&name, &input),
-                name: name.clone(),
-            });
             let n = conv.citations.len() + 1;
-            let (result, ok) = match execute(&name, &input) {
-                Ok(v) => (v, true),
-                Err(e) => (json!({"error": e.to_string()}), false),
-            };
-            let mut for_model = json!({"source": n});
-            if let (Some(dst), Some(src)) = (for_model.as_object_mut(), result.as_object()) {
-                dst.extend(src.clone());
-            } else {
-                for_model["result"] = result.clone();
+            if let Some(r) = rounds.last_mut() {
+                r.sources.push(n);
             }
+            // A repeat of a call already made for this question: point the
+            // model at the earlier result instead of sending it again.
+            let key = trace::call_key(&name, &input);
+            let label = super::tools::describe(&name, &input);
+            let earlier = conv.citations[first_citation..]
+                .iter()
+                .find(|c| c.ok && c.duplicate_of.is_none() && trace::call_key(&c.tool, &c.input) == key)
+                .map(|c| (c.n, c.result.clone()));
+            let (result, ok, ms, duplicate_of, for_model) = match earlier {
+                Some((prev, result)) => (
+                    result,
+                    true,
+                    0,
+                    Some(prev),
+                    json!({"source": n, "same_as_source": prev,
+                           "note": format!("Identical to the call that returned source {prev}; use that result.")}),
+                ),
+                None => {
+                    progress(Progress::Tool {
+                        label: label.clone(),
+                        name: name.clone(),
+                    });
+                    let ran = std::time::Instant::now();
+                    let (result, ok) = match execute(&name, &input) {
+                        Ok(v) => (v, true),
+                        Err(e) => (json!({"error": e.to_string()}), false),
+                    };
+                    let ms = ran.elapsed().as_millis() as u64;
+                    let mut for_model = json!({"source": n});
+                    if let (Some(dst), Some(src)) = (for_model.as_object_mut(), result.as_object()) {
+                        dst.extend(src.clone());
+                    } else {
+                        for_model["result"] = result.clone();
+                    }
+                    (result, ok, ms, None, for_model)
+                }
+            };
             let content = conv.redactor.mask_json(&for_model).to_string();
             conv.citations.push(Citation {
                 n,
@@ -284,6 +341,10 @@ pub async fn run_turn(
                 input,
                 result,
                 ok,
+                label,
+                ms,
+                sent_chars: content.chars().count(),
+                duplicate_of,
             });
             results.push(Block::ToolResult {
                 id,
@@ -297,24 +358,45 @@ pub async fn run_turn(
         });
     }
 
-    Ok(Turn {
+    Ok(finish(
+        conv,
+        first_citation,
+        "I stopped after several rounds of tool calls without reaching an answer. Try a more specific question.".into(),
+        StopReason::Other,
+        model,
+        rounds,
+        started,
+    ))
+}
+
+fn finish(
+    conv: &Conversation,
+    first_citation: usize,
+    answer: String,
+    stop: StopReason,
+    model: String,
+    rounds: Vec<Round>,
+    started: std::time::Instant,
+) -> Turn {
+    let sum = |f: fn(&Round) -> u64| rounds.iter().map(f).sum();
+    let mut turn = Turn {
         conversation_id: conv.id.clone(),
-        answer: "I stopped after several rounds of tool calls without reaching an answer. Try a more specific question.".into(),
+        answer,
         citations: conv.citations[first_citation..].to_vec(),
-        stop: StopReason::Other,
+        stop,
         model,
         redacted: conv.redactor.enabled(),
         masked_values: conv.redactor.masked_count(),
-        input_tokens,
-        output_tokens,
-        assumptions: Vec::new(),
-        context_revision: 0,
-        unverified_figures: Vec::new(),
-        turn_id: None,
-        data_as_of: None,
-        missing_data: Vec::new(),
-        reference_examples: 0,
-    })
+        input_tokens: sum(|r| r.input_tokens),
+        output_tokens: sum(|r| r.output_tokens),
+        cache_read_tokens: sum(|r| r.cache_read_tokens),
+        cache_write_tokens: sum(|r| r.cache_write_tokens),
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        rounds,
+        ..Default::default()
+    };
+    turn.flags = trace::flags(&turn);
+    turn
 }
 
 #[cfg(test)]
@@ -371,6 +453,8 @@ mod tests {
                     model: "scripted".into(),
                     input_tokens: 10,
                     output_tokens: 5,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
                     request_json: request,
                     response_json: Value::Null,
                 })
@@ -416,7 +500,10 @@ mod tests {
                 executed.push((name.to_owned(), input.clone()));
                 Ok(json!({"total": 42.5, "top": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0", "app": "checkout"}))
             },
-            |reply| logged.push(reply.request_json.to_string()),
+            |reply, _, _| {
+                logged.push(reply.request_json.to_string());
+                Some(logged.len() as i64)
+            },
             |p| stages.push(p),
         )
         .await
@@ -441,5 +528,94 @@ mod tests {
         assert!(matches!(stages[0], Progress::Thinking { round: 0 }));
         assert!(matches!(&stages[1], Progress::Tool { name, .. } if name == "query_costs"));
         assert!(matches!(stages[2], Progress::Thinking { round: 1 }));
+        // The trace: two rounds, the first asked for source 1.
+        assert_eq!(turn.rounds.len(), 2);
+        assert_eq!(turn.rounds[0].sources, [1]);
+        assert_eq!(turn.rounds[1].log_id, Some(2));
+        assert_eq!((turn.input_tokens, turn.output_tokens), (20, 10));
+        assert!(turn.citations[0].sent_chars > 0);
+        assert!(turn.flags.is_empty());
+    }
+
+    /// Asks for the same query twice in one round, then answers.
+    struct Repeats;
+
+    impl Provider for Repeats {
+        fn complete<'a>(
+            &'a self,
+            _: &'a str,
+            messages: &'a [Message],
+            _: &'a [ToolSpec],
+        ) -> BoxFuture<'a, Result<Reply>> {
+            Box::pin(async move {
+                let call = |id: &str, input: Value| Block::ToolUse {
+                    id: id.into(),
+                    name: "query_costs".into(),
+                    input,
+                };
+                let (blocks, stop) = if messages.len() == 1 {
+                    (
+                        vec![
+                            call("a", json!({"group_by": "service", "start": "2026-09-01"})),
+                            call("b", json!({"start": "2026-09-01", "group_by": "service"})),
+                        ],
+                        StopReason::ToolUse,
+                    )
+                } else {
+                    (vec![Block::Text("Done [1].".into())], StopReason::EndTurn)
+                };
+                Ok(Reply {
+                    blocks,
+                    stop,
+                    model: "m".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    request_json: Value::Null,
+                    response_json: Value::Null,
+                })
+            })
+        }
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Anthropic
+        }
+        fn model(&self) -> &str {
+            "m"
+        }
+    }
+
+    #[tokio::test]
+    async fn a_repeated_call_runs_once_and_is_flagged() {
+        let mut conv = Conversation {
+            id: "c".into(),
+            messages: Vec::new(),
+            redactor: Redactor::new(false, []),
+            citations: Vec::new(),
+        };
+        let mut runs = 0;
+        let turn = run_turn(
+            &Repeats,
+            &[],
+            &mut conv,
+            "q",
+            "",
+            |_, _| {
+                runs += 1;
+                Ok(json!({"total": 1}))
+            },
+            |_, _, _| None,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(runs, 1);
+        assert_eq!(turn.citations[1].duplicate_of, Some(1));
+        // The model gets a pointer, not the result again.
+        let Block::ToolResult { content, .. } = &conv.messages[2].blocks[1] else {
+            panic!("expected a tool result");
+        };
+        assert!(content.contains("\"same_as_source\":1") && !content.contains("total"), "{content}");
+        assert!(matches!(&turn.flags[0], trace::TraceFlag::RepeatedCall { times: 2, .. }));
     }
 }
