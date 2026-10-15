@@ -17,6 +17,7 @@ struct Figure {
     decimals: i32,
     /// Written with a k/M/B suffix: compare with a relative tolerance.
     abbreviated: bool,
+    percent: bool,
 }
 
 fn is_word_char(c: char) -> bool {
@@ -27,6 +28,12 @@ fn is_word_char(c: char) -> bool {
 /// Skips identifiers inside words (EC2, m5.large, USE1), dates and years,
 /// long digit runs (account IDs) and citation markers like `[2]`.
 fn figures(text: &str) -> Vec<Figure> {
+    figures_with(text, false)
+}
+
+/// As [`figures`]; `small` also keeps plain numbers under 100 (a table
+/// column of amounts written without a currency).
+fn figures_with(text: &str, small: bool) -> Vec<Figure> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -94,7 +101,7 @@ fn figures(text: &str) -> Vec<Figure> {
             before.contains("DSU") // "USD " reversed
         };
         let is_year = !raw.contains(['.', ',']) && (1990.0..=2100.0).contains(&value);
-        if !percent && !money && suffix_len == 0 && (value < 100.0 || is_year) {
+        if !percent && !money && suffix_len == 0 && ((value < 100.0 && !small) || is_year) {
             continue;
         }
         let decimals = digits.split_once('.').map_or(0, |(_, d)| d.len() as i32);
@@ -117,6 +124,7 @@ fn figures(text: &str) -> Vec<Figure> {
             value: value * multiplier,
             decimals,
             abbreviated: suffix_len > 0,
+            percent,
         });
     }
     out
@@ -168,11 +176,24 @@ pub fn figure_texts(text: &str) -> Vec<String> {
     out
 }
 
-/// Whether `answer` states the figure `expected` (like `$1,234.56` or
-/// `12.5%`), at any rounding. None when `expected` isn't one figure.
+/// Whether `answer` states the figure `expected` (like `$1,234.56`, `12.5%`
+/// or `USD 980`), at any rounding. None when `expected` is anything more
+/// than one figure, such as `EC2 spend $500`: that is matched as text.
+///
+/// A percentage only matches a percentage. An amount also matches a plain
+/// number, since tables often drop the currency, but never a percentage.
 pub fn states_figure(answer: &str, expected: &str) -> Option<bool> {
-    let [e] = figures(expected).try_into().ok()?;
-    Some(figures(answer).iter().any(|f| matches(f, e.value)))
+    let [e] = figures_with(expected, true).try_into().ok()?;
+    let rest = expected.trim().replacen(&e.text, "", 1);
+    if !matches!(rest.trim(), "" | "USD" | "US") {
+        return None;
+    }
+    Some(
+        figures_with(answer, true)
+            .iter()
+            .filter(|f| f.percent == e.percent)
+            .any(|f| matches(f, e.value)),
+    )
 }
 
 /// Figures in `answer` that match no number in the sources.
