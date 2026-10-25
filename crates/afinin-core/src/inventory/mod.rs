@@ -323,7 +323,9 @@ impl Collected {
     }
 
     /// Marks resources that a stack manages (see [`iac`]). A physical ID is
-    /// matched against the ARN, the native ID, the name or the queue URL,
+    /// matched against identifiers AWS assigns: the ARN, the native ID, the
+    /// queue URL or an Elastic IP's address (never the name, which can come
+    /// from a free-text `Name` tag),
     /// and the member's CloudFormation type must be one for the resource's
     /// type (a function and a table may share a name). The stack must be in
     /// the resource's region, except for S3 buckets and CloudFront, whose
@@ -346,8 +348,8 @@ impl Collected {
             let keys = [
                 Some(r.arn.as_str()),
                 Some(r.native_id.as_str()),
-                r.name.as_deref(),
                 r.attrs.get("url").and_then(|v| v.as_str()),
+                r.attrs.get("public_ip").and_then(|v| v.as_str()),
             ];
             let found = keys.into_iter().flatten().find_map(|k| {
                 by_id.get(k)?.iter().copied().find(|(st, m)| {
@@ -391,7 +393,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stack_members_are_matched_by_arn_id_name_or_url() {
+    fn stack_members_are_matched_by_aws_identifiers() {
         let stack = |region: &str, members: &[(&str, &str, &str)]| Stack {
             name: format!("api-{region}"),
             region: region.into(),
@@ -420,6 +422,12 @@ mod tests {
             Resource::new(ResourceType::DynamoDbTable, "arn:table", "1", "us-east-1", "handler"),
             // A function with that name in a region where no stack has it.
             Resource::new(ResourceType::LambdaFunction, "arn:fn-ap", "1", "ap-south-1", "handler"),
+            // A Name tag that looks like a stack member's ID proves nothing.
+            {
+                let mut sg = Resource::new(ResourceType::SecurityGroup, "arn:sg-manual", "1", "us-east-1", "sg-0manual");
+                sg.name = Some("sg-0stack".into());
+                sg
+            },
         ];
         found.apply_stacks(&[
             stack(
@@ -428,6 +436,7 @@ mod tests {
                     ("https://sqs.us-east-1.amazonaws.com/1/jobs", "JobsQueueA1B2C3D4", "AWS::SQS::Queue"),
                     ("handler", "HandlerUs", "AWS::Lambda::Function"),
                     ("assets", "Assets", "AWS::S3::Bucket"),
+                    ("sg-0stack", "WebSg", "AWS::EC2::SecurityGroup"),
                 ],
             ),
             stack("eu-west-1", &[("handler", "HandlerEu", "AWS::Lambda::Function")]),
@@ -445,5 +454,6 @@ mod tests {
         assert_eq!(attr(3, iac::ATTR_STACK), None);
         assert_eq!(attr(4, iac::ATTR_STACK), None, "a table isn't the stack's function");
         assert_eq!(attr(5, iac::ATTR_STACK), None, "no cross-region match");
+        assert_eq!(attr(6, iac::ATTR_STACK), None, "names are not identifiers");
     }
 }
