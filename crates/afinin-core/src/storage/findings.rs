@@ -210,9 +210,12 @@ impl Storage {
 
     // ---- commitments & AWS anomalies --------------------------------------
 
+    /// When commitments were last fetched. None also for rows saved before
+    /// reservations were split by service, so they are fetched again.
     pub(crate) fn commitments_fetched_at(&self, source: &str) -> Result<Option<String>> {
         Ok(self.conn.query_row(
-            "SELECT max(fetched_at) FROM commitments WHERE source_account = ?",
+            "SELECT CASE WHEN bool_or(kind = 'reservations') THEN NULL ELSE max(fetched_at) END
+             FROM commitments WHERE source_account = ?",
             params![source],
             |r| r.get(0),
         )?)
@@ -224,12 +227,24 @@ impl Storage {
         summaries: &[CommitmentSummary],
     ) -> Result<()> {
         let now = now_rfc3339();
+        // Replace the account's rows: services without reservations any more
+        // (and rows from before the split by service) must go.
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM commitments WHERE source_account = ?",
+            params![source],
+        )?;
         for s in summaries {
-            self.conn.execute(
+            let key = match &s.service {
+                Some(service) => format!("{}:{service}", s.kind),
+                None => s.kind.clone(),
+            };
+            tx.execute(
                 "INSERT OR REPLACE INTO commitments VALUES (?, ?, ?, ?)",
-                params![source, s.kind, json(s)?, now],
+                params![source, key, json(s)?, now],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -275,5 +290,55 @@ impl Storage {
             .filter_map(|r| r.ok())
             .filter_map(|(a, d)| Some((a, serde_json::from_str(&d).ok()?)))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reservations_are_stored_per_service_and_old_rows_refetched() {
+        let db = Storage::open_in_memory().unwrap();
+        // A row saved before reservations were split by service.
+        db.conn
+            .execute(
+                "INSERT INTO commitments VALUES ('acc', 'reservations', '{}', '2026-10-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(db.commitments_fetched_at("acc").unwrap(), None, "refetch");
+
+        let row = |kind: &str, service: Option<&str>| CommitmentSummary {
+            kind: kind.into(),
+            service: service.map(Into::into),
+            ..Default::default()
+        };
+        db.save_commitments(
+            "acc",
+            &[
+                row("savings_plans", None),
+                row("reservations", Some("Amazon Elastic Compute Cloud - Compute")),
+                row("reservations", Some("Amazon Relational Database Service")),
+            ],
+        )
+        .unwrap();
+        assert!(db.commitments_fetched_at("acc").unwrap().is_some());
+        let keys: Vec<String> = db
+            .conn
+            .prepare("SELECT kind FROM commitments WHERE source_account = 'acc' ORDER BY kind")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "reservations:Amazon Elastic Compute Cloud - Compute",
+                "reservations:Amazon Relational Database Service",
+                "savings_plans"
+            ]
+        );
     }
 }

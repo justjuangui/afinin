@@ -292,9 +292,12 @@ function Trends({ insights }: { insights: Insights }) {
             </thead>
             <tbody>
               {insights.commitments.map(([account, c]) => (
-                <tr key={`${account}-${c.kind}`}>
+                <tr key={`${account}-${c.kind}-${c.service ?? ""}`}>
                   <td>
-                    {account} <span className="muted small">{c.kind === "savings_plans" ? "SP" : "RI"}</span>
+                    {account}{" "}
+                    <span className="muted small">
+                      {c.kind === "savings_plans" ? "SP" : `RI${c.service ? ` · ${shortService(c.service)}` : ""}`}
+                    </span>
                   </td>
                   <td className="num">{c.coverage_pct === null ? "—" : `${c.coverage_pct.toFixed(0)}%`}</td>
                   <td className="num">{c.utilization_pct === null ? "—" : `${c.utilization_pct.toFixed(0)}%`}</td>
@@ -306,4 +309,16 @@ function Trends({ insights }: { insights: Insights }) {
       </section>
     </aside>
   );
+}
+
+/** Short names for the services reservations cover. */
+function shortService(service: string): string {
+  const short: Record<string, string> = {
+    "Amazon Elastic Compute Cloud - Compute": "EC2",
+    "Amazon Relational Database Service": "RDS",
+    "Amazon ElastiCache": "ElastiCache",
+    "Amazon Redshift": "Redshift",
+    "Amazon Elasticsearch Service": "OpenSearch",
+  };
+  return short[service] ?? service;
 }
