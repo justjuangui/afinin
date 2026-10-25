@@ -9,6 +9,7 @@
 pub mod arn;
 pub mod collect;
 pub mod graph;
+pub mod iac;
 pub mod sync;
 
 use std::collections::BTreeMap;
@@ -260,6 +261,9 @@ pub struct Collected {
     pub warnings: Vec<String>,
     /// Tags from the tagging API, applied once all regions are merged.
     pub tags_by_arn: std::collections::HashMap<String, BTreeMap<String, String>>,
+    /// CloudFormation stacks; their members are annotated once all regions
+    /// are merged (a stack in one region can manage an S3 bucket listed globally).
+    pub stacks: Vec<collect::cloudformation::Stack>,
 }
 
 impl Collected {
@@ -268,6 +272,42 @@ impl Collected {
         self.relations.extend(other.relations);
         self.warnings.extend(other.warnings);
         self.tags_by_arn.extend(other.tags_by_arn);
+        self.stacks.extend(other.stacks);
+    }
+
+    /// Marks resources that a stack manages (see [`iac`]). A physical ID is
+    /// matched against the ARN, the native ID, the name or the queue URL;
+    /// stacks in the resource's own region win over others.
+    pub fn apply_stacks(&mut self, stacks: &[collect::cloudformation::Stack]) {
+        let mut by_id: std::collections::HashMap<&str, Vec<(&collect::cloudformation::Stack, &str)>> =
+            std::collections::HashMap::new();
+        for st in stacks {
+            for (physical, logical) in &st.members {
+                by_id.entry(physical.as_str()).or_default().push((st, logical.as_str()));
+            }
+        }
+        for r in &mut self.resources {
+            let keys = [
+                Some(r.arn.as_str()),
+                Some(r.native_id.as_str()),
+                r.name.as_deref(),
+                r.attrs.get("url").and_then(|v| v.as_str()),
+            ];
+            let found = keys.into_iter().flatten().find_map(|k| {
+                let hits = by_id.get(k)?;
+                hits.iter()
+                    .find(|(st, _)| st.region == r.region)
+                    .or_else(|| (hits.len() == 1).then(|| &hits[0]))
+                    .copied()
+            });
+            if let Some((st, logical)) = found {
+                let (stack, tool, reason) = (st.name.clone(), st.tool.id(), st.reason.clone());
+                r.attr(iac::ATTR_STACK, Some(serde_json::Value::String(stack)))
+                    .attr(iac::ATTR_LOGICAL_ID, Some(serde_json::Value::String(logical.to_owned())))
+                    .attr(iac::ATTR_TOOL, Some(serde_json::Value::String(tool.to_owned())))
+                    .attr(iac::ATTR_TOOL_REASON, reason.map(serde_json::Value::String));
+            }
+        }
     }
 
     /// Fills tags (and the `Name`-based display name) from the tagging API.
@@ -286,5 +326,58 @@ impl Collected {
 
     pub(crate) fn relate(&mut self, from: &str, to: impl Into<String>, kind: RelationKind) {
         self.relations.push(Relation::new(from, to, kind));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect::cloudformation::Stack;
+    use super::iac::IacTool;
+    use super::*;
+
+    #[test]
+    fn stack_members_are_matched_by_arn_id_name_or_url() {
+        let stack = |region: &str, members: &[(&str, &str)]| Stack {
+            name: format!("api-{region}"),
+            region: region.into(),
+            tool: IacTool::Cdk,
+            reason: Some("the stack has CDK metadata".into()),
+            members: members
+                .iter()
+                .map(|(p, l)| ((*p).to_owned(), (*l).to_owned()))
+                .collect(),
+        };
+        let mut found = Collected::default();
+        let mut queue = Resource::new(ResourceType::SqsQueue, "arn:aws:sqs:us-east-1:1:jobs", "1", "us-east-1", "jobs");
+        queue.attr("url", Some("https://sqs.us-east-1.amazonaws.com/1/jobs".into()));
+        found.resources = vec![
+            queue,
+            // Same function name in two regions: the stack in its own region wins.
+            Resource::new(ResourceType::LambdaFunction, "arn:fn-eu", "1", "eu-west-1", "handler"),
+            Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::assets", "1", "us-east-1", "assets"),
+            Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::other", "1", "us-east-1", "other"),
+        ];
+        found.apply_stacks(&[
+            stack(
+                "us-east-1",
+                &[
+                    ("https://sqs.us-east-1.amazonaws.com/1/jobs", "JobsQueueA1B2C3D4"),
+                    ("handler", "HandlerUs"),
+                    ("assets", "Assets"),
+                ],
+            ),
+            stack("eu-west-1", &[("handler", "HandlerEu")]),
+        ]);
+        let attr = |i: usize, k: &str| {
+            found.resources[i]
+                .attrs
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        };
+        assert_eq!(attr(0, iac::ATTR_LOGICAL_ID).as_deref(), Some("JobsQueueA1B2C3D4"));
+        assert_eq!(attr(1, iac::ATTR_STACK).as_deref(), Some("api-eu-west-1"));
+        assert_eq!(attr(2, iac::ATTR_TOOL).as_deref(), Some("cdk"));
+        assert_eq!(attr(3, iac::ATTR_STACK), None);
     }
 }

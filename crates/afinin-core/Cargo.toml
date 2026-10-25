@@ -39,6 +39,7 @@ aws-sdk-resourcegroupstagging = "1"
 aws-sdk-bcmdataexports = "1"
 aws-sdk-pricing = "1"
 aws-sdk-bedrockruntime = "1"
+aws-sdk-cloudformation = "1"
 aws-smithy-types = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 regex = "1"

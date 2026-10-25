@@ -40,6 +40,7 @@ dependencies = [
  "aws-sdk-apigatewayv2",
  "aws-sdk-bcmdataexports",
  "aws-sdk-bedrockruntime",
+ "aws-sdk-cloudformation",
  "aws-sdk-cloudfront",
  "aws-sdk-costexplorer",
  "aws-sdk-dynamodb",
@@ -720,6 +721,31 @@ dependencies = [
  "http 0.2.12",
  "http 1.5.0",
  "http-body-util",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-cloudformation"
+version = "1.106.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4565837fddd9efb073c56f8d37a98616e0ec770f2d4bffb1e4fbc6e8810c3209"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-query",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
  "regex-lite",
  "tracing",
 ]

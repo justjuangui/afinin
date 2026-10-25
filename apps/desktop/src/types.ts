@@ -209,6 +209,8 @@ export interface GraphNode {
   /** Cost Explorer service, and its 30-day total in the account (shared by its resources). */
   service: string | null;
   service_cost: number | null;
+  /** The tool that made it (infrastructure as code), when there is evidence. */
+  managed_by: ManagedBy | null;
   context: boolean;
 }
 
@@ -234,6 +236,8 @@ export interface GraphFilter {
   /** `missing`: resources without the key (or with an empty value). */
   tag: { key: string; value: string | null; missing?: boolean } | null;
   include_network: boolean;
+  /** Tools that made the resources (`IacTool` ids), or "none". */
+  managed_by: string[];
 }
 
 export interface Facet {
@@ -248,6 +252,8 @@ export interface InventoryFacets {
   vpcs: Facet[];
   types: Facet[];
   tag_keys: Facet[];
+  /** Tools that made the resources, and "none". */
+  managed_by: Facet[];
   total: number;
 }
 
@@ -331,7 +337,36 @@ export interface Insights {
   data_transfer: { key: string; label: string; total: number }[];
   data_transfer_total: number;
   commitments: [string, CommitmentSummary][];
+  /** How much of the inventory was made as code. */
+  iac: IacSummary;
   unit: string;
+}
+
+export type IacTool =
+  | "cdk"
+  | "cloud_formation"
+  | "sam"
+  | "serverless"
+  | "elastic_beanstalk"
+  | "copilot"
+  | "amplify"
+  | "terraform"
+  | "pulumi";
+
+export interface ManagedBy {
+  tool: IacTool;
+  confidence: "certain" | "likely" | "hint";
+  /** Why, in words: "tag aws:cloudformation:stack-name = api". */
+  evidence: string;
+  stack: string | null;
+}
+
+export interface IacSummary {
+  /** Resources that count (network interfaces and snapshots excluded). */
+  total: number;
+  by_tool: { tool: IacTool; label: string; resources: number; certain: number }[];
+  unmanaged: number;
+  unmanaged_by_type: { resource_type: string; label: string; count: number }[];
 }
 
 export type ProviderKind = "none" | "open_ai_compatible" | "anthropic" | "bedrock";

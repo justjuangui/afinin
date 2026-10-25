@@ -4,6 +4,7 @@
 //! reports failures as warnings, so one denied API never hides the rest.
 
 mod apigateway;
+pub mod cloudformation;
 mod cloudfront;
 mod containers;
 mod data;
@@ -87,12 +88,13 @@ pub async fn collect_region(ctx: &Ctx<'_>, lightsail: bool) -> Collected {
         guarded("ecs", r, containers::ecs(ctx)),
         guarded("eks", r, containers::eks(ctx)),
     );
-    let (i, j, k, l, m, n) = futures::join!(
+    let (i, j, k, l, m, n, o) = futures::join!(
         guarded("sqs", r, messaging::sqs(ctx)),
         guarded("sns", r, messaging::sns(ctx)),
         guarded("apigateway", r, apigateway::rest(ctx)),
         guarded("apigatewayv2", r, apigateway::http(ctx)),
         guarded("tagging", r, tagging::collect(ctx)),
+        guarded("cloudformation", r, cloudformation::collect(ctx)),
         async {
             if lightsail {
                 guarded("lightsail", r, lightsail::collect(ctx)).await
@@ -102,7 +104,7 @@ pub async fn collect_region(ctx: &Ctx<'_>, lightsail: bool) -> Collected {
         },
     );
     let mut out = Collected::default();
-    for part in [a, b, c, d, e, f, g, h, i, j, k, l, m, n] {
+    for part in [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o] {
         out.extend(part);
     }
     out
