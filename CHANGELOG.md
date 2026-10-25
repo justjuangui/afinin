@@ -28,6 +28,10 @@ First feature-complete version (MVP, milestones M0–M6).
   graph, bundle list prices, and waste findings (unattached static IPs and disks, stopped
   instances). The IAM policies gain the matching `lightsail:Get*` actions.
 - **Graph**: Flow and Network layouts, untagged-resource filter, minimap.
+- **Infrastructure as code**: which tool made each resource (CloudFormation, CDK, SAM, Serverless,
+  Beanstalk, Copilot, Amplify, Terraform, Pulumi) from stacks, tags and generated names, with
+  confidence and evidence; "Managed by" graph filter, coverage card in Findings, assistant tool. The
+  IAM policies gain `cloudformation:ListStacks` and `ListStackResources`.
 - **Data**: encrypted local database, retention setting, password-encrypted backup and restore.
 - **Release**: signed auto-updates, installers for macOS, Linux and Windows, SBOMs, read-only
   IAM role as CloudFormation StackSet and Terraform module.
