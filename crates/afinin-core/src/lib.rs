@@ -1160,6 +1160,7 @@ impl Afinin {
         save: bool,
     ) -> Result<Turn> {
         let cfg = self.settings()?.llm;
+        let mut remaining_budget = None;
         if let Some(budget) = cfg.monthly_budget_usd.filter(|b| *b > 0.0) {
             let spent: f64 = self
                 .llm_usage_this_month()?
@@ -1168,9 +1169,12 @@ impl Afinin {
                 .sum();
             if spent >= budget {
                 return Err(Error::Other(format!(
-                    "This month's assistant budget (${budget:.2}) is used up: about ${spent:.2} so far.                      Raise it in Settings → Assistant, or wait for next month."
+                    "This month's assistant budget (${budget:.2}) is used up: about ${spent:.2} so far. \
+                     Raise it in Settings → Assistant, or wait for next month."
                 )));
             }
+            // Checked again before each further request of this answer.
+            remaining_budget = cfg.price(&cfg.model()).map(|p| (p, budget - spent));
         }
         let provider = self.llm_provider(&cfg).await?;
         let existing = conversation_id.and_then(|id| {
@@ -1262,6 +1266,25 @@ impl Afinin {
                     .ok()
             },
             on_progress,
+            |rounds| {
+                let (price, remaining) = remaining_budget?;
+                let used: f64 = rounds
+                    .iter()
+                    .map(|r| {
+                        price.cost(
+                            r.input_tokens,
+                            r.output_tokens,
+                            r.cache_read_tokens,
+                            r.cache_write_tokens,
+                        )
+                    })
+                    .sum();
+                (used >= remaining).then(|| {
+                    "I stopped before finishing: this month's assistant budget was reached while answering. \
+                     Raise it in Settings → Assistant to continue."
+                        .to_owned()
+                })
+            },
         )
         .await
         .map(|mut turn| {

@@ -211,7 +211,9 @@ pub fn system_prompt(p: &PromptContext<'_>) -> String {
 
 /// Runs one user turn: asks the model, executes its tool calls locally, and
 /// repeats until it answers. `log` records each request and returns its log
-/// entry id; it gets the 1-based round and the time spent waiting.
+/// entry id; it gets the 1-based round and the time spent waiting. `stop`
+/// is asked before every request after the first, with the rounds so far;
+/// a message ends the turn with it as the answer (the monthly budget).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_turn(
     provider: &dyn Provider,
@@ -222,6 +224,7 @@ pub async fn run_turn(
     mut execute: impl FnMut(&str, &Value) -> Result<Value>,
     mut log: impl FnMut(&Reply, usize, u64) -> Option<i64>,
     mut progress: impl FnMut(Progress),
+    mut stop: impl FnMut(&[Round]) -> Option<String>,
 ) -> Result<Turn> {
     let masked = conv.redactor.mask(user_text);
     conv.messages.push(Message::user_text(masked));
@@ -231,6 +234,11 @@ pub async fn run_turn(
     let mut rounds: Vec<Round> = Vec::new();
     let mut model = provider.model().to_owned();
     for round in 0..MAX_ROUNDS {
+        if round > 0
+            && let Some(answer) = stop(&rounds)
+        {
+            return Ok(finish(conv, first_citation, answer, StopReason::Other, model, rounds, started));
+        }
         progress(Progress::Thinking { round });
         let waited = std::time::Instant::now();
         let reply = provider.complete(system, &conv.messages, tools).await?;
@@ -505,6 +513,7 @@ mod tests {
                 Some(logged.len() as i64)
             },
             |p| stages.push(p),
+            |_| None,
         )
         .await
         .unwrap();
@@ -606,6 +615,7 @@ mod tests {
             },
             |_, _, _| None,
             |_| {},
+            |_| None,
         )
         .await
         .unwrap();
@@ -617,5 +627,32 @@ mod tests {
         };
         assert!(content.contains("\"same_as_source\":1") && !content.contains("total"), "{content}");
         assert!(matches!(&turn.flags[0], trace::TraceFlag::RepeatedCall { times: 2, .. }));
+    }
+
+    #[tokio::test]
+    async fn the_stop_guard_ends_the_turn_before_another_request() {
+        let mut conv = Conversation {
+            id: "c".into(),
+            messages: Vec::new(),
+            redactor: Redactor::new(false, []),
+            citations: Vec::new(),
+        };
+        let turn = run_turn(
+            &Repeats,
+            &[],
+            &mut conv,
+            "q",
+            "",
+            |_, _| Ok(json!({"total": 1})),
+            |_, _, _| None,
+            |_| {},
+            |rounds| (!rounds.is_empty()).then(|| "Budget reached.".to_owned()),
+        )
+        .await
+        .unwrap();
+        // One request, its tools ran, then the guard stopped the second.
+        assert_eq!(turn.rounds.len(), 1);
+        assert_eq!(turn.answer, "Budget reached.");
+        assert_eq!(turn.stop, StopReason::Other);
     }
 }
