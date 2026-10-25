@@ -342,6 +342,8 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
             let hits: Vec<Value> = graph
                 .nodes
                 .iter()
+                // Context nodes are neighbours added for display, not matches.
+                .filter(|n| !n.context)
                 .filter(|n| wanted.is_none_or(|t| n.resource_type.id() == t))
                 .filter(|n| {
                     n.label.to_ascii_lowercase().contains(&q) || n.native_id.to_ascii_lowercase().contains(&q) || n.id.to_ascii_lowercase().contains(&q)

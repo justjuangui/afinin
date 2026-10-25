@@ -21,8 +21,16 @@ pub struct Stack {
     pub tool: IacTool,
     /// Why `tool` (e.g. "the stack has CDK metadata").
     pub reason: Option<String>,
-    /// (physical ID, logical ID) of each managed resource.
-    pub members: Vec<(String, String)>,
+    /// Each managed resource.
+    pub members: Vec<Member>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Member {
+    pub physical_id: String,
+    pub logical_id: String,
+    /// CloudFormation type, e.g. `AWS::Lambda::Function`.
+    pub cfn_type: String,
 }
 
 /// Stack flavour from its name and its resources' (logical ID, type).
@@ -131,7 +139,11 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
             members: resources
                 .iter()
                 .filter(|(_, p, _)| !p.is_empty())
-                .map(|(l, p, _)| (p.clone(), l.clone()))
+                .map(|(l, p, t)| Member {
+                    physical_id: p.clone(),
+                    logical_id: l.clone(),
+                    cfn_type: t.clone(),
+                })
                 .collect(),
         });
     }

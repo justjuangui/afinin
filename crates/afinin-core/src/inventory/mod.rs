@@ -111,6 +111,53 @@ impl ResourceType {
         !matches!(self, Self::LightsailStaticIp)
     }
 
+    /// CloudFormation types that create this kind of resource, to match
+    /// stack members to resources.
+    pub fn cfn_types(self) -> &'static [&'static str] {
+        match self {
+            Self::CloudFrontDistribution => &["AWS::CloudFront::Distribution"],
+            Self::ApiGatewayRestApi => &["AWS::ApiGateway::RestApi", "AWS::Serverless::Api"],
+            Self::ApiGatewayHttpApi => &["AWS::ApiGatewayV2::Api", "AWS::Serverless::HttpApi"],
+            Self::LoadBalancer => &[
+                "AWS::ElasticLoadBalancingV2::LoadBalancer",
+                "AWS::ElasticLoadBalancing::LoadBalancer",
+            ],
+            Self::TargetGroup => &["AWS::ElasticLoadBalancingV2::TargetGroup"],
+            Self::Ec2Instance => &["AWS::EC2::Instance"],
+            Self::EcsCluster => &["AWS::ECS::Cluster"],
+            Self::EcsService => &["AWS::ECS::Service"],
+            Self::EksCluster => &["AWS::EKS::Cluster"],
+            Self::LambdaFunction => &["AWS::Lambda::Function", "AWS::Serverless::Function"],
+            Self::EbsVolume => &["AWS::EC2::Volume"],
+            Self::EbsSnapshot => &[],
+            Self::RdsInstance => &["AWS::RDS::DBInstance"],
+            Self::RdsCluster => &["AWS::RDS::DBCluster"],
+            Self::DynamoDbTable => &[
+                "AWS::DynamoDB::Table",
+                "AWS::DynamoDB::GlobalTable",
+                "AWS::Serverless::SimpleTable",
+            ],
+            Self::ElastiCacheCluster => &[
+                "AWS::ElastiCache::CacheCluster",
+                "AWS::ElastiCache::ReplicationGroup",
+            ],
+            Self::S3Bucket => &["AWS::S3::Bucket"],
+            Self::SqsQueue => &["AWS::SQS::Queue"],
+            Self::SnsTopic => &["AWS::SNS::Topic"],
+            Self::NatGateway => &["AWS::EC2::NatGateway"],
+            Self::ElasticIp => &["AWS::EC2::EIP"],
+            Self::Vpc => &["AWS::EC2::VPC"],
+            Self::Subnet => &["AWS::EC2::Subnet"],
+            Self::SecurityGroup => &["AWS::EC2::SecurityGroup"],
+            Self::NetworkInterface => &["AWS::EC2::NetworkInterface"],
+            Self::LightsailLoadBalancer => &["AWS::Lightsail::LoadBalancer"],
+            Self::LightsailInstance => &["AWS::Lightsail::Instance"],
+            Self::LightsailDisk => &["AWS::Lightsail::Disk"],
+            Self::LightsailDatabase => &["AWS::Lightsail::Database"],
+            Self::LightsailStaticIp => &["AWS::Lightsail::StaticIp"],
+        }
+    }
+
     pub fn is_lightsail(self) -> bool {
         matches!(
             self,
@@ -276,17 +323,26 @@ impl Collected {
     }
 
     /// Marks resources that a stack manages (see [`iac`]). A physical ID is
-    /// matched against the ARN, the native ID, the name or the queue URL;
-    /// stacks in the resource's own region win over others.
+    /// matched against the ARN, the native ID, the name or the queue URL,
+    /// and the member's CloudFormation type must be one for the resource's
+    /// type (a function and a table may share a name). The stack must be in
+    /// the resource's region, except for S3 buckets and CloudFront, whose
+    /// names are global.
     pub fn apply_stacks(&mut self, stacks: &[collect::cloudformation::Stack]) {
-        let mut by_id: std::collections::HashMap<&str, Vec<(&collect::cloudformation::Stack, &str)>> =
+        type Hit<'a> = (&'a collect::cloudformation::Stack, &'a collect::cloudformation::Member);
+        let mut by_id: std::collections::HashMap<&str, Vec<Hit<'_>>> =
             std::collections::HashMap::new();
         for st in stacks {
-            for (physical, logical) in &st.members {
-                by_id.entry(physical.as_str()).or_default().push((st, logical.as_str()));
+            for m in &st.members {
+                by_id.entry(m.physical_id.as_str()).or_default().push((st, m));
             }
         }
         for r in &mut self.resources {
+            let types = r.resource_type.cfn_types();
+            let global = matches!(
+                r.resource_type,
+                ResourceType::S3Bucket | ResourceType::CloudFrontDistribution
+            );
             let keys = [
                 Some(r.arn.as_str()),
                 Some(r.native_id.as_str()),
@@ -294,13 +350,12 @@ impl Collected {
                 r.attrs.get("url").and_then(|v| v.as_str()),
             ];
             let found = keys.into_iter().flatten().find_map(|k| {
-                let hits = by_id.get(k)?;
-                hits.iter()
-                    .find(|(st, _)| st.region == r.region)
-                    .or_else(|| (hits.len() == 1).then(|| &hits[0]))
-                    .copied()
+                by_id.get(k)?.iter().copied().find(|(st, m)| {
+                    types.contains(&m.cfn_type.as_str()) && (global || st.region == r.region)
+                })
             });
-            if let Some((st, logical)) = found {
+            if let Some((st, m)) = found {
+                let logical = m.logical_id.as_str();
                 let (stack, tool, reason) = (st.name.clone(), st.tool.id(), st.reason.clone());
                 r.attr(iac::ATTR_STACK, Some(serde_json::Value::String(stack)))
                     .attr(iac::ATTR_LOGICAL_ID, Some(serde_json::Value::String(logical.to_owned())))
@@ -331,20 +386,24 @@ impl Collected {
 
 #[cfg(test)]
 mod tests {
-    use super::collect::cloudformation::Stack;
+    use super::collect::cloudformation::{Member, Stack};
     use super::iac::IacTool;
     use super::*;
 
     #[test]
     fn stack_members_are_matched_by_arn_id_name_or_url() {
-        let stack = |region: &str, members: &[(&str, &str)]| Stack {
+        let stack = |region: &str, members: &[(&str, &str, &str)]| Stack {
             name: format!("api-{region}"),
             region: region.into(),
             tool: IacTool::Cdk,
             reason: Some("the stack has CDK metadata".into()),
             members: members
                 .iter()
-                .map(|(p, l)| ((*p).to_owned(), (*l).to_owned()))
+                .map(|(p, l, t)| Member {
+                    physical_id: (*p).to_owned(),
+                    logical_id: (*l).to_owned(),
+                    cfn_type: (*t).to_owned(),
+                })
                 .collect(),
         };
         let mut found = Collected::default();
@@ -354,19 +413,24 @@ mod tests {
             queue,
             // Same function name in two regions: the stack in its own region wins.
             Resource::new(ResourceType::LambdaFunction, "arn:fn-eu", "1", "eu-west-1", "handler"),
-            Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::assets", "1", "us-east-1", "assets"),
+            // Listed globally; its stack is in a region.
+            Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::assets", "1", "global", "assets"),
             Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::other", "1", "us-east-1", "other"),
+            // Same name as the stack's function: another type, not a member.
+            Resource::new(ResourceType::DynamoDbTable, "arn:table", "1", "us-east-1", "handler"),
+            // A function with that name in a region where no stack has it.
+            Resource::new(ResourceType::LambdaFunction, "arn:fn-ap", "1", "ap-south-1", "handler"),
         ];
         found.apply_stacks(&[
             stack(
                 "us-east-1",
                 &[
-                    ("https://sqs.us-east-1.amazonaws.com/1/jobs", "JobsQueueA1B2C3D4"),
-                    ("handler", "HandlerUs"),
-                    ("assets", "Assets"),
+                    ("https://sqs.us-east-1.amazonaws.com/1/jobs", "JobsQueueA1B2C3D4", "AWS::SQS::Queue"),
+                    ("handler", "HandlerUs", "AWS::Lambda::Function"),
+                    ("assets", "Assets", "AWS::S3::Bucket"),
                 ],
             ),
-            stack("eu-west-1", &[("handler", "HandlerEu")]),
+            stack("eu-west-1", &[("handler", "HandlerEu", "AWS::Lambda::Function")]),
         ]);
         let attr = |i: usize, k: &str| {
             found.resources[i]
@@ -379,5 +443,7 @@ mod tests {
         assert_eq!(attr(1, iac::ATTR_STACK).as_deref(), Some("api-eu-west-1"));
         assert_eq!(attr(2, iac::ATTR_TOOL).as_deref(), Some("cdk"));
         assert_eq!(attr(3, iac::ATTR_STACK), None);
+        assert_eq!(attr(4, iac::ATTR_STACK), None, "a table isn't the stack's function");
+        assert_eq!(attr(5, iac::ATTR_STACK), None, "no cross-region match");
     }
 }
