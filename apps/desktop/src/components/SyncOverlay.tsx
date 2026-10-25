@@ -10,6 +10,8 @@ const TIPS = [
   "Mark an answer you trust as a reference. Similar questions follow its queries, and re-checks tell you when it changes.",
   "“Trace” under an answer shows each round, the tokens it used and what it cost.",
   "Switch the cost metric to Amortized to spread Savings Plan and reservation fees over the days they cover.",
+  "In Inventory, filter the graph by “Managed by → Not detected” to find resources nobody manages as code.",
+  "Tag Terraform resources with ManagedBy=terraform (default_tags) and the Findings coverage card counts them.",
   "The Network layout groups connected resources into clusters; Flow lays them out from entry points to data.",
   "Applications groups resources by a tag. The “(untagged)” group shows what nobody has claimed yet.",
   "Connect a CUR 2.0 export to see each resource’s own cost and savings at your real rates.",
