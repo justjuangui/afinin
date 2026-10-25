@@ -18,6 +18,8 @@ struct Figure {
     /// Written with a k/M/B suffix: compare with a relative tolerance.
     abbreviated: bool,
     percent: bool,
+    /// Written with a minus sign before it (`-$500`, `-12.5%`, `$-500`).
+    negative: bool,
 }
 
 fn is_word_char(c: char) -> bool {
@@ -125,6 +127,14 @@ fn figures_with(text: &str, small: bool) -> Vec<Figure> {
             decimals,
             abbreviated: suffix_len > 0,
             percent,
+            negative: {
+                // Skip a currency sign and spaces back to a possible minus.
+                let mut k = start;
+                while k > 0 && matches!(chars[k - 1], '$' | '€' | '£' | ' ') {
+                    k -= 1;
+                }
+                k > 0 && matches!(chars[k - 1], '-' | '−')
+            },
         });
     }
     out
@@ -191,7 +201,7 @@ pub fn states_figure(answer: &str, expected: &str) -> Option<bool> {
     Some(
         figures_with(answer, true)
             .iter()
-            .filter(|f| f.percent == e.percent)
+            .filter(|f| f.percent == e.percent && f.negative == e.negative)
             .any(|f| matches(f, e.value)),
     )
 }

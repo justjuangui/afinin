@@ -733,19 +733,20 @@ impl Afinin {
                 .flatten()
                 .is_none_or(|t| t < week_ago);
             if due {
-                let (summaries, calls, errs) =
-                    findings::commitments::fetch(config, &start, &end).await;
+                let fetched = findings::commitments::fetch(config, &start, &end).await;
                 let db = self.db();
                 let _ = db.record_api_call(
                     account_id,
                     "ce",
                     "Get*Coverage/Utilization",
-                    calls as f64 * cost::source::CE_REQUEST_COST_USD,
+                    fetched.calls as f64 * cost::source::CE_REQUEST_COST_USD,
                 );
-                if let Err(e) = db.save_commitments(account_id, &summaries) {
+                if let Err(e) =
+                    db.save_commitments(account_id, &fetched.summaries, &fetched.checked)
+                {
                     warnings.push(format!("commitments: {e}"));
                 }
-                warnings.extend(errs);
+                warnings.extend(fetched.warnings);
             }
         }
         if settings.import_aws_anomalies {

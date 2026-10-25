@@ -56,16 +56,38 @@ fn interval(start: &str, end: &str) -> Result<DateInterval> {
         .map_err(|e| Error::Other(e.to_string()))
 }
 
-/// Fetches both summaries; returns them and the number of billable requests made.
-pub async fn fetch(
-    config: &SdkConfig,
-    start: &str,
-    end: &str,
-) -> (Vec<CommitmentSummary>, u32, Vec<String>) {
+impl CommitmentSummary {
+    /// Storage key: the kind, plus the service for reservations.
+    pub fn key(&self) -> String {
+        key(&self.kind, self.service.as_deref())
+    }
+}
+
+pub fn key(kind: &str, service: Option<&str>) -> String {
+    match service {
+        Some(service) => format!("{kind}:{service}"),
+        None => kind.to_owned(),
+    }
+}
+
+/// What a fetch found.
+#[derive(Debug, Default)]
+pub struct Fetched {
+    pub summaries: Vec<CommitmentSummary>,
+    /// Keys answered successfully, with or without a summary: their stored
+    /// rows can be replaced. A key that failed keeps its previous row.
+    pub checked: Vec<String>,
+    pub calls: u32,
+    pub warnings: Vec<String>,
+}
+
+/// Fetches Savings Plans and per-service reservation summaries.
+pub async fn fetch(config: &SdkConfig, start: &str, end: &str) -> Fetched {
     let client = CostExplorer::new(config).client().clone();
     let mut calls = 0;
     let mut warnings = Vec::new();
     let mut out = Vec::new();
+    let mut checked = Vec::new();
 
     let mut sp = CommitmentSummary {
         kind: "savings_plans".into(),
@@ -74,7 +96,10 @@ pub async fn fetch(
         ..Default::default()
     };
     match savings_plans(&client, start, end, &mut sp, &mut calls).await {
-        Ok(()) => out.push(sp),
+        Ok(()) => {
+            checked.push(sp.key());
+            out.push(sp);
+        }
         Err(e) => warnings.push(format!("Savings Plans: {e}")),
     }
     // Cost Explorer reports reservations for one service per request and
@@ -88,12 +113,21 @@ pub async fn fetch(
             ..Default::default()
         };
         match reservations(&client, start, end, service, &mut ri, &mut calls).await {
-            Ok(true) => out.push(ri),
-            Ok(false) => {}
+            Ok(has) => {
+                checked.push(ri.key());
+                if has {
+                    out.push(ri);
+                }
+            }
             Err(e) => warnings.push(format!("Reservations ({service}): {e}")),
         }
     }
-    (out, calls, warnings)
+    Fetched {
+        summaries: out,
+        checked,
+        calls,
+        warnings,
+    }
 }
 
 async fn savings_plans(
