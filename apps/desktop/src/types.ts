@@ -516,6 +516,12 @@ export interface Recheck {
   expectations: { expected: string; met: boolean }[];
 }
 
+/** A stage of a running sync, for the account `account_id`. */
+export type SyncProgress = { account_id: string } & (
+  | { stage: "connecting" | "costs" | "cur" | "findings" }
+  | { stage: "inventory"; done: number; total: number }
+);
+
 /** `recheck_turn_id` is set while a reference answer is being re-checked. */
 export type AssistantProgress = { workspace_id: string; recheck_turn_id?: number } & (
   | { stage: "thinking"; round: number }

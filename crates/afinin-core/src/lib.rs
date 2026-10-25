@@ -85,6 +85,21 @@ pub struct Afinin {
 /// Keychain entry for the LLM provider's API key (FR-2).
 const LLM_KEY_SECRET: &str = "llm-api-key";
 
+/// What a sync is doing, for progress display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum SyncStage {
+    /// Getting credentials for the account.
+    Connecting,
+    Costs,
+    /// Loading new CUR files.
+    Cur,
+    /// Regions scanned so far (the global services count as one).
+    Inventory { done: usize, total: usize },
+    /// Public prices, Savings Plans / RI coverage and anomalies.
+    Findings,
+}
+
 /// Outcome of syncing one account: costs and inventory run independently.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct AccountSyncReport {
@@ -264,6 +279,15 @@ impl Afinin {
 
     /// Fetches Cost Explorer data for one account (FR-14, FR-50).
     pub async fn sync_account(&self, account_id: &str) -> Result<AccountSyncReport> {
+        self.sync_account_with_progress(account_id, &|_| {}).await
+    }
+
+    /// As [`Self::sync_account`], reporting each stage to `progress`.
+    pub async fn sync_account_with_progress(
+        &self,
+        account_id: &str,
+        progress: &(dyn Fn(SyncStage) + Send + Sync),
+    ) -> Result<AccountSyncReport> {
         let _guard = {
             let mut syncing = self.syncing.lock().unwrap_or_else(|e| e.into_inner());
             if !syncing.insert(account_id.to_owned()) {
@@ -280,6 +304,7 @@ impl Afinin {
         self.db().set_sync_running(account_id)?;
 
         let mut report = AccountSyncReport::default();
+        progress(SyncStage::Connecting);
         let config = async {
             let profile = self.profile(&account.profile)?;
             aws::sdk_config(&profile, self.secrets.as_ref()).await
@@ -290,6 +315,7 @@ impl Afinin {
             Ok(config) => {
                 // Costs and inventory are independent: one failing must not hide the other.
                 let source = cost::source::CostExplorer::new(&config);
+                progress(SyncStage::Costs);
                 match cost::sync::sync_account(
                     &self.storage,
                     &source,
@@ -304,6 +330,7 @@ impl Afinin {
                 }
                 let cur_config = self.db().cur_config(account_id)?;
                 if let Some(cfg) = cur_config {
+                    progress(SyncStage::Cur);
                     let store = cur::source::S3Store::new(&config, &cfg);
                     match cur::ingest::ingest(&self.storage, &store, &cfg, &self.tmp_dir).await {
                         Ok(r) => report.cur = Some(r),
@@ -316,6 +343,7 @@ impl Afinin {
                         &config,
                         account_id,
                         &settings.inventory_regions,
+                        &|done, total| progress(SyncStage::Inventory { done, total }),
                     )
                     .await
                     {
@@ -333,6 +361,7 @@ impl Afinin {
             }
             .await;
             if let Ok(config) = config {
+                progress(SyncStage::Findings);
                 report.warnings.extend(
                     self.refresh_finding_inputs(&config, account_id, &settings)
                         .await,

@@ -7,8 +7,8 @@ import type {
   Account,
   AccountSyncReport,
   ApiUsage,
-  AssistantProgress,
   Application,
+  AssistantProgress,
   AwsProfile,
   ContextRevision,
   ConversationSummary,
@@ -40,6 +40,7 @@ import type {
   SsoLoginStatus,
   StoredContext,
   StoredTurn,
+  SyncProgress,
   Turn,
   Workspace,
   WorkspaceContext,
@@ -77,6 +78,8 @@ export const api = {
   onSyncChanged: (cb: (accountId: string) => void): Promise<UnlistenFn> =>
     listen<string>("sync-changed", (e) => cb(e.payload)),
   /** Fires for each model call and tool call while the assistant answers. */
+  onSyncProgress: (cb: (p: SyncProgress) => void): Promise<UnlistenFn> =>
+    listen<SyncProgress>("sync-progress", (e) => cb(e.payload)),
   onAssistantProgress: (cb: (p: AssistantProgress) => void): Promise<UnlistenFn> =>
     listen<AssistantProgress>("assistant-progress", (e) => cb(e.payload)),
 
