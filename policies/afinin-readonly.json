@@ -65,6 +65,8 @@
         "sqs:ListQueues",
         "sns:ListTopics",
         "sns:ListSubscriptions",
+        "cloudformation:ListStacks",
+        "cloudformation:ListStackResources",
         "lightsail:GetRegions",
         "lightsail:GetInstances",
         "lightsail:GetRelationalDatabases",

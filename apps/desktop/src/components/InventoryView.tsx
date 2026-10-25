@@ -110,7 +110,29 @@ function savedLayout(): Layout {
 /** Tag value select option for "resources without this tag". */
 const UNTAGGED = "\u0000untagged";
 
-const EMPTY_FILTER: GraphFilter = { accounts: [], regions: [], vpcs: [], types: [], tag: null, include_network: false };
+const EMPTY_FILTER: GraphFilter = {
+  accounts: [],
+  regions: [],
+  vpcs: [],
+  types: [],
+  tag: null,
+  include_network: false,
+  managed_by: [],
+};
+
+/** Display names of the tools in `ManagedBy.tool`. */
+export const IAC_LABEL: Record<string, string> = {
+  cdk: "AWS CDK",
+  cloud_formation: "CloudFormation",
+  sam: "AWS SAM",
+  serverless: "Serverless Framework",
+  elastic_beanstalk: "Elastic Beanstalk",
+  copilot: "AWS Copilot",
+  amplify: "Amplify",
+  terraform: "Terraform",
+  pulumi: "Pulumi",
+  none: "Not detected",
+};
 
 interface NodeData extends Record<string, unknown> {
   node: GraphNode;
@@ -325,6 +347,8 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
     if (filter.regions.length) details.push({ key: "only regions", meaning: filter.regions.join(", ") });
     if (filter.vpcs.length) details.push({ key: "only VPCs", meaning: filter.vpcs.join(", ") });
     if (filter.types.length) details.push({ key: "only types", meaning: names(facets?.types, filter.types) });
+    if (filter.managed_by.length)
+      details.push({ key: "only managed by", meaning: filter.managed_by.map((t) => IAC_LABEL[t] ?? t).join(", ") });
     if (filter.tag)
       details.push({
         key: "tag filter",
@@ -489,6 +513,12 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
             <MultiSelect label="Regions" options={facets.regions} selected={filter.regions} onChange={(regions) => set({ regions })} />
             <MultiSelect label="VPCs" options={facets.vpcs} selected={filter.vpcs} onChange={(vpcs) => set({ vpcs })} />
             <MultiSelect label="Types" options={facets.types} selected={filter.types} onChange={(types) => set({ types })} />
+            <MultiSelect
+              label="Managed by"
+              options={facets.managed_by}
+              selected={filter.managed_by}
+              onChange={(managed_by) => set({ managed_by })}
+            />
             <select
               aria-label="Tag key"
               value={filter.tag?.key ?? ""}
@@ -737,6 +767,23 @@ function Details({
         </dd>
         <dt>Region</dt>
         <dd>{node.region}</dd>
+        <dt>Managed by</dt>
+        <dd>
+          {node.managed_by ? (
+            <>
+              {IAC_LABEL[node.managed_by.tool] ?? node.managed_by.tool}{" "}
+              <span className={`badge ${node.managed_by.confidence === "certain" ? "ok" : "warn"}`}>
+                {node.managed_by.confidence}
+              </span>
+              <div className="muted small">{node.managed_by.evidence}</div>
+            </>
+          ) : (
+            <span className="muted small">
+              No sign of CloudFormation, CDK, Terraform or another tool: likely created by hand or by a tool that leaves
+              no tags.
+            </span>
+          )}
+        </dd>
         {node.vpc_id && (
           <>
             <dt>VPC</dt>

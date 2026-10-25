@@ -504,6 +504,14 @@ impl Afinin {
         ))
     }
 
+    /// How much of the inventory was made as code, and with which tools.
+    pub fn iac_coverage(&self, workspace_id: &str) -> Result<inventory::iac::IacSummary> {
+        let (resources, relations) = self.db().workspace_inventory(workspace_id)?;
+        let edges = inventory::graph::resolve(&resources, &relations);
+        let found = inventory::iac::detect_all(&resources, &edges);
+        Ok(inventory::iac::summarize(&resources, &found))
+    }
+
     /// Resources connected to `arn` within `depth` hops.
     pub fn resource_neighbors(
         &self,
@@ -572,8 +580,8 @@ impl Afinin {
 
     /// Filter options with counts.
     pub fn inventory_facets(&self, workspace_id: &str) -> Result<InventoryFacets> {
-        let (resources, _) = self.db().workspace_inventory(workspace_id)?;
-        let mut facets = inventory::graph::facets(&resources);
+        let (resources, relations) = self.db().workspace_inventory(workspace_id)?;
+        let mut facets = inventory::graph::facets(&resources, &relations);
         // Account names as in the cost filters: "Production (944211113721)".
         let names: HashMap<String, String> = self
             .db()
@@ -889,6 +897,8 @@ impl Afinin {
             group_by,
             filter: CostFilter::default(),
         };
+        // Before `db` below: it holds the lock for the rest of the function.
+        let iac = self.iac_coverage(workspace_id)?;
         let db = self.db();
         let mut top_movers =
             db.compare_costs(&query(GroupBy::Service, d(-30), d(0)), &d(-60), &d(-30))?;
@@ -927,6 +937,7 @@ impl Afinin {
                 .map(|g| g.total)
                 .sum(),
             commitments,
+            iac,
             unit: usage.unit,
         })
     }
@@ -1422,6 +1433,8 @@ pub struct Insights {
     pub data_transfer_total: f64,
     /// Savings Plans / RI coverage per connected account.
     pub commitments: Vec<(String, findings::commitments::CommitmentSummary)>,
+    /// How much of the inventory was made as code.
+    pub iac: inventory::iac::IacSummary,
     pub unit: String,
 }
 
@@ -1553,6 +1566,20 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("applications() did not return: database lock taken twice");
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn insights_include_iac_coverage_without_deadlocking() {
+        let (afinin, ws) = afinin_with_unattached_volume();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(afinin.insights(&ws).map(|i| (i.iac.total, i.iac.unmanaged)));
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("insights() did not return: database lock taken twice");
+        // The fixture's one volume: no evidence of any tool.
+        assert_eq!(result.unwrap(), (1, 1));
     }
 
     #[test]

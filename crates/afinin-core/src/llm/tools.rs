@@ -98,10 +98,13 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "search_resources",
-            description: "Find discovered resources by name, ID or ARN fragment, optionally of one type (e.g. `rds:db`, `ec2:instance`).",
+            description: "Find discovered resources by name, ID or ARN fragment (empty query: any), optionally of one type \
+                          (e.g. `rds:db`, `ec2:instance`) or made with one tool (`managed_by`, `none` for no evidence of any tool).",
             schema: json!({"type": "object", "properties": {
                 "query": {"type": "string"},
                 "resource_type": {"type": "string"},
+                "managed_by": {"type": "string", "enum": ["cdk", "cloud_formation", "sam", "serverless", "elastic_beanstalk",
+                               "copilot", "amplify", "terraform", "pulumi", "none"]},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50}
             }, "required": ["query"]}),
         },
@@ -117,6 +120,13 @@ pub fn specs() -> Vec<ToolSpec> {
                 "arn": {"type": "string"},
                 "depth": {"type": "integer", "minimum": 1, "maximum": 3}
             }, "required": ["arn"]}),
+        },
+        ToolSpec {
+            name: "get_iac_coverage",
+            description: "How much of the inventory was made as code, per tool (CloudFormation, CDK, SAM, Terraform…), \
+                          and the resource types with no evidence of any tool. Detection uses CloudFormation stacks, tags \
+                          and generated names; Terraform is only seen through tags or generated names.",
+            schema: json!({"type": "object", "properties": {}}),
         },
         ToolSpec {
             name: "get_insights",
@@ -325,6 +335,7 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 workspace_id,
                 &GraphFilter {
                     include_network: true,
+                    managed_by: input["managed_by"].as_str().map(str::to_owned).into_iter().collect(),
                     ..Default::default()
                 },
             )?;
@@ -339,6 +350,7 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 .map(|n| json!({
                     "arn": n.id, "type": n.resource_type.id(), "name": n.label, "region": n.region,
                     "account_id": n.account_id, "state": n.attrs.get("state").or_else(|| n.attrs.get("status")),
+                    "managed_by": n.managed_by.as_ref().map(|m| m.tool.id()),
                 }))
                 .collect();
             Ok(json!({"matches": hits}))
@@ -384,6 +396,7 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                     Some(crate::inventory::graph::CostBasis::Service) => "its whole service in this account, of which it is the only resource (Cost Explorer)",
                     None => "unknown without CUR",
                 },
+                "managed_by": node.managed_by,
                 "service": node.service,
                 "service_cost_30d_shared": node.service_cost.map(round),
                 "connections": connections,
@@ -405,6 +418,8 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
             str_arg(input, "detail")?;
             Ok(json!({"recorded": true, "need": need}))
         }
+        "get_iac_coverage" => serde_json::to_value(afinin.iac_coverage(workspace_id)?)
+            .map_err(|e| Error::Other(e.to_string())),
         "get_insights" => serde_json::to_value(afinin.insights(workspace_id)?)
             .map_err(|e| Error::Other(e.to_string())),
         other => Err(Error::Other(format!("unknown tool `{other}`"))),
@@ -458,6 +473,7 @@ pub fn describe(name: &str, input: &Value) -> String {
             }
         }
         "get_insights" => "Reading trends and top movers".into(),
+        "get_iac_coverage" => "Checking which resources are managed as code".into(),
         "report_missing_data" => "Noting data the answer needs".into(),
         other => format!("Running {other}"),
     }

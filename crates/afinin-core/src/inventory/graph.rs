@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
+use super::iac::{self, ManagedBy};
 use super::{Relation, RelationKind, Resource, ResourceType, Tier, normalize_dns};
 use crate::findings::pricing::{HOURS_PER_MONTH, PriceBook, PriceItem};
 
@@ -31,14 +32,27 @@ pub struct GraphFilter {
     pub tag: Option<TagFilter>,
     /// Show VPCs, subnets, security groups and network interfaces.
     pub include_network: bool,
+    /// Only resources made with these tools (`IacTool` ids), or `none` for
+    /// resources with no evidence of any tool.
+    pub managed_by: Vec<String>,
 }
+
+/// The `managed_by` filter value for resources no tool claims.
+pub const UNMANAGED: &str = "none";
 
 impl GraphFilter {
     fn narrows(&self) -> bool {
-        !self.vpcs.is_empty() || self.tag.is_some() || !self.types.is_empty()
+        !self.vpcs.is_empty()
+            || self.tag.is_some()
+            || !self.types.is_empty()
+            || !self.managed_by.is_empty()
     }
 
-    fn matches(&self, r: &Resource) -> bool {
+    fn matches(&self, r: &Resource, managed: Option<&ManagedBy>) -> bool {
+        let tool = managed.map_or(UNMANAGED, |m| m.tool.id());
+        if !self.managed_by.is_empty() && !self.managed_by.iter().any(|t| t == tool) {
+            return false;
+        }
         (self.include_network || !r.resource_type.is_network_plumbing())
             && (!r.resource_type.is_bulk() || self.types.contains(&r.resource_type))
             && (self.accounts.is_empty() || self.accounts.contains(&r.account_id))
@@ -83,6 +97,8 @@ pub struct GraphNode {
     /// account over 30 days (shared by every resource of the service).
     pub service: Option<&'static str>,
     pub service_cost: Option<f64>,
+    /// The tool that made it (infrastructure as code), when there is evidence.
+    pub managed_by: Option<ManagedBy>,
     /// Included only as context for a filtered match.
     pub context: bool,
 }
@@ -245,10 +261,11 @@ pub fn build(
 ) -> Graph {
     let edges = resolve(resources, relations);
     let by_arn: HashMap<&str, &Resource> = resources.iter().map(|r| (r.arn.as_str(), r)).collect();
+    let managed = iac::detect_all(resources, &edges);
 
     let matched: HashSet<&str> = resources
         .iter()
-        .filter(|r| filter.matches(r))
+        .filter(|r| filter.matches(r, managed.get(r.arn.as_str())))
         .map(|r| r.arn.as_str())
         .collect();
     // With narrowing filters, keep direct neighbors as context so a VPC's
@@ -298,6 +315,7 @@ pub fn build(
             cost_basis: node_cost(r, cost_basis, costs, &per_service).map(|(_, b)| b),
             service: r.resource_type.cost_service(),
             service_cost: service_cost(r, costs),
+            managed_by: managed.get(r.arn.as_str()).cloned(),
             context: !matched.contains(r.arn.as_str()),
         })
         .collect();
@@ -400,6 +418,8 @@ pub struct InventoryFacets {
     pub vpcs: Vec<Facet>,
     pub types: Vec<Facet>,
     pub tag_keys: Vec<Facet>,
+    /// Tools that made the resources (`IacTool` ids, and `none`).
+    pub managed_by: Vec<Facet>,
     pub total: usize,
 }
 
@@ -410,7 +430,7 @@ pub struct Facet {
     pub count: usize,
 }
 
-pub fn facets(resources: &[Resource]) -> InventoryFacets {
+pub fn facets(resources: &[Resource], relations: &[Relation]) -> InventoryFacets {
     fn collect(counts: BTreeMap<String, (String, usize)>) -> Vec<Facet> {
         let mut v: Vec<Facet> = counts
             .into_iter()
@@ -419,13 +439,15 @@ pub fn facets(resources: &[Resource]) -> InventoryFacets {
         v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
         v
     }
-    let (mut accounts, mut regions, mut vpcs, mut types, mut tags) = (
+    let (mut accounts, mut regions, mut vpcs, mut types, mut tags, mut tools) = (
+        BTreeMap::new(),
         BTreeMap::new(),
         BTreeMap::new(),
         BTreeMap::new(),
         BTreeMap::new(),
         BTreeMap::new(),
     );
+    let managed = iac::detect_all(resources, &resolve(resources, relations));
     let vpc_names: HashMap<&str, &str> = resources
         .iter()
         .filter(|r| r.resource_type == ResourceType::Vpc)
@@ -437,6 +459,10 @@ pub fn facets(resources: &[Resource]) -> InventoryFacets {
         };
         bump(&mut accounts, &r.account_id, r.account_id.clone());
         bump(&mut regions, &r.region, r.region.clone());
+        match managed.get(r.arn.as_str()) {
+            Some(m) => bump(&mut tools, m.tool.id(), m.tool.label().to_owned()),
+            None => bump(&mut tools, UNMANAGED, "Not detected".to_owned()),
+        }
         bump(
             &mut types,
             r.resource_type.id(),
@@ -462,6 +488,7 @@ pub fn facets(resources: &[Resource]) -> InventoryFacets {
         vpcs: collect(vpcs),
         types: collect(types),
         tag_keys: collect(tags),
+        managed_by: collect(tools),
         total: resources.len(),
     }
 }
@@ -755,8 +782,8 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert!(!filter.matches(&resources[0]));
-        assert!(filter.matches(&resources[1]));
+        assert!(!filter.matches(&resources[0], None));
+        assert!(filter.matches(&resources[1], None));
     }
 
     #[test]
@@ -800,10 +827,40 @@ mod tests {
         let untagged = apps.iter().find(|a| a.value.is_empty()).unwrap();
         assert_eq!(untagged.resource_count, 4);
 
-        let f = facets(&resources);
+        let f = facets(&resources, &[]);
         assert_eq!(f.total, 8);
         assert_eq!(f.tag_keys[0].key, "app");
         assert_eq!(f.vpcs[0].count, 2);
         assert_eq!(tag_values(&resources, "app")[0].count, 2);
+    }
+
+    #[test]
+    fn filters_by_the_tool_that_made_a_resource() {
+        let mut cfn = Resource::new(ResourceType::SqsQueue, "arn:q1", A, "us-east-1", "q1");
+        cfn.tags
+            .insert("aws:cloudformation:stack-name".into(), "api".into());
+        let manual = Resource::new(ResourceType::SqsQueue, "arn:q2", A, "us-east-1", "q2");
+        let resources = vec![cfn, manual];
+        let only = |tools: &[&str]| {
+            let filter = GraphFilter {
+                managed_by: tools.iter().map(|t| (*t).to_owned()).collect(),
+                ..Default::default()
+            };
+            build(&resources, &[], &filter, &CostOverlay::default())
+                .nodes
+                .iter()
+                .map(|n| n.native_id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(only(&["cloud_formation"]), ["q1"]);
+        assert_eq!(only(&[UNMANAGED]), ["q2"]);
+        let g = build(&resources, &[], &GraphFilter::default(), &CostOverlay::default());
+        assert_eq!(
+            g.nodes[0].managed_by.as_ref().map(|m| m.tool),
+            Some(iac::IacTool::CloudFormation)
+        );
+        let f = facets(&resources, &[]);
+        let keys: Vec<&str> = f.managed_by.iter().map(|x| x.key.as_str()).collect();
+        assert_eq!(keys, ["cloud_formation", UNMANAGED]);
     }
 }

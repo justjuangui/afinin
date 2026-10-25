@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { addDays, todayUtc } from "../dates";
 import { money, percent } from "../format";
-import type { ContextEntry, Finding, FindingKind, Insights, Severity } from "../types";
+import type { ContextEntry, Finding, FindingKind, IacSummary, Insights, Severity } from "../types";
 import { Callout } from "./Callout";
 
 const SEVERITY: Record<Severity, { label: string; icon: string }> = {
@@ -277,6 +277,8 @@ function Trends({ insights }: { insights: Insights }) {
         </table>
       </section>
 
+      <IacCoverage iac={insights.iac} />
+
       <section className="panel">
         <h2>Savings Plans &amp; RIs</h2>
         {insights.commitments.length === 0 ? (
@@ -321,4 +323,64 @@ function shortService(service: string): string {
     "Amazon Elasticsearch Service": "OpenSearch",
   };
   return short[service] ?? service;
+}
+
+/** How much of the inventory was made as code, and with which tools. */
+function IacCoverage({ iac }: { iac: IacSummary }) {
+  if (iac.total === 0) return null;
+  const managed = iac.total - iac.unmanaged;
+  const share = Math.round((managed / iac.total) * 100);
+  return (
+    <section className="panel">
+      <h2>Infrastructure as code</h2>
+      <p className="muted small">
+        {share}% of {iac.total} resources show which tool made them
+        (CloudFormation stacks, tags, generated names).
+      </p>
+      <div
+        className="iac-bar"
+        role="img"
+        aria-label={`${share}% managed as code`}
+      >
+        <span style={{ width: `${share}%` }} />
+      </div>
+      <table className="breakdown compact">
+        <tbody>
+          {iac.by_tool.map((t) => (
+            <tr key={t.tool}>
+              <td>{t.label}</td>
+              <td className="num">{t.resources}</td>
+              <td className="num muted small">
+                {t.certain === t.resources ? "certain" : `${t.certain} certain`}
+              </td>
+            </tr>
+          ))}
+          {iac.unmanaged > 0 && (
+            <tr>
+              <td>Not detected</td>
+              <td className="num">{iac.unmanaged}</td>
+              <td
+                className="num muted small"
+                title={iac.unmanaged_by_type
+                  .map((u) => `${u.label}: ${u.count}`)
+                  .join(", ")}
+              >
+                {iac.unmanaged_by_type
+                  .slice(0, 2)
+                  .map((u) => `${u.count} ${u.label}`)
+                  .join(", ")}
+                {iac.unmanaged_by_type.length > 2 && "…"}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className="muted small">
+        Terraform and Pulumi leave no AWS trace of their own: tag their
+        resources (e.g. <code>ManagedBy=terraform</code> in{" "}
+        <code>default_tags</code>) to have them counted. Filter the graph by{" "}
+        <b>Managed by</b> to see each group.
+      </p>
+    </section>
+  );
 }

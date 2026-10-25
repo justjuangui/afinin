@@ -100,11 +100,17 @@ pub async fn sync_inventory(
         .iter_mut()
         .flat_map(|(_, c)| std::mem::take(&mut c.tags_by_arn))
         .collect();
+    // Likewise stacks: a stack's members may be listed in another scan.
+    let all_stacks: Vec<_> = scans
+        .iter_mut()
+        .flat_map(|(_, c)| std::mem::take(&mut c.stacks))
+        .collect();
     let mut kept = Vec::new();
     for (region, mut found) in scans {
         found.tags_by_arn = all_tags.clone();
         found.apply_tags();
         found.tags_by_arn.clear();
+        found.apply_stacks(&all_stacks);
         report.resources += found.resources.len();
         report.warnings.extend(found.warnings.iter().cloned());
         db.lock()
