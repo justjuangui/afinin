@@ -273,6 +273,11 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE assistant_turns ADD COLUMN expected TEXT;
     "#,
+    // v13: refetch Savings Plans / RI summaries, now split by service and
+    // limited to services with reservations (they refresh only weekly).
+    r#"
+    DELETE FROM commitments;
+    "#,
 ];
 
 /// Tables holding per-account data, purged when an account is removed.
