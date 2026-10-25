@@ -76,6 +76,11 @@ impl IacTool {
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|t| t.id() == id)
     }
+
+    /// Tools that deploy through CloudFormation stacks.
+    pub fn deploys_with_cloudformation(self) -> bool {
+        !matches!(self, Self::Terraform | Self::Pulumi)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -210,6 +215,15 @@ fn from_tags(tags: &BTreeMap<String, String>) -> Option<ManagedBy> {
     }
     if let Some(stack) = tag("aws:cloudformation:stack-name") {
         let evidence = format!("tag aws:cloudformation:stack-name = {stack}");
+        // The team's own tag can name the CloudFormation-based tool for
+        // certain (`ManagedBy = cdk`); one naming another kind of tool
+        // (`terraform`) loses to the stack AWS recorded.
+        if let Some(d) = declared(tags).filter(|d| d.tool.deploys_with_cloudformation()) {
+            return Some(
+                ManagedBy::new(d.tool, Confidence::Certain, format!("{}; {evidence}", d.evidence))
+                    .in_stack(Some(stack)),
+            );
+        }
         let found = if stack.starts_with("awseb-") {
             ManagedBy::new(IacTool::ElasticBeanstalk, Confidence::Certain, evidence)
         } else if stack.starts_with("amplify-") {
@@ -225,6 +239,12 @@ fn from_tags(tags: &BTreeMap<String, String>) -> Option<ManagedBy> {
         };
         return Some(found.in_stack(Some(stack)));
     }
+    declared(tags)
+}
+
+/// A tool the team declared in a tag: `ManagedBy = cdk`, `terraform = true`,
+/// `pulumi:project`.
+fn declared(tags: &BTreeMap<String, String>) -> Option<ManagedBy> {
     for (k, v) in tags {
         if k.starts_with("pulumi:") {
             return Some(ManagedBy::new(
@@ -279,10 +299,9 @@ pub fn detect(r: &Resource) -> Option<ManagedBy> {
             .unwrap_or(IacTool::CloudFormation);
         if tool == IacTool::CloudFormation
             && let Some(m) = from_tags(&r.tags).filter(|m| {
-                matches!(
-                    m.tool,
-                    IacTool::Sam | IacTool::Copilot | IacTool::ElasticBeanstalk | IacTool::Amplify
-                )
+                m.tool != IacTool::CloudFormation
+                    && m.tool.deploys_with_cloudformation()
+                    && m.confidence == Confidence::Certain
             })
         {
             return Some(m.in_stack(Some(stack)));
@@ -509,6 +528,26 @@ mod tests {
             ("aws:cloudformation:logical-id", "HandlerF68F3FF0"),
         ];
         assert_eq!(tool(&res(T::LambdaFunction, "f", &cdk_tags)), Some((Cdk, Likely)));
+        // The team's ManagedBy tag makes it certain, with both pieces of evidence.
+        let declared_cdk = [
+            ("ManagedBy", "cdk"),
+            ("aws:cloudformation:stack-name", "Jc-Site-JuanCarvajal"),
+            ("aws:cloudformation:logical-id", "SiteBucket978D4AEB"),
+        ];
+        let m = detect(&res(T::S3Bucket, "site", &declared_cdk)).unwrap();
+        assert_eq!((m.tool, m.confidence), (Cdk, Certain));
+        assert_eq!(
+            m.evidence,
+            "tag ManagedBy = cdk; tag aws:cloudformation:stack-name = Jc-Site-JuanCarvajal"
+        );
+        // A tag claiming Terraform doesn't beat the stack AWS recorded.
+        let conflicting = [("ManagedBy", "terraform"), ("aws:cloudformation:stack-name", "web")];
+        assert_eq!(tool(&res(T::S3Bucket, "b", &conflicting)), Some((CloudFormation, Certain)));
+        // In a plain CloudFormation stack, a declared CDK tag names the tool.
+        let mut in_plain = res(T::S3Bucket, "b2", &[("ManagedBy", "cdk")]);
+        in_plain.attrs.insert(ATTR_STACK.into(), "site".into());
+        in_plain.attrs.insert(ATTR_TOOL.into(), "cloud_formation".into());
+        assert_eq!(tool(&in_plain), Some((Cdk, Certain)));
         assert_eq!(
             tool(&res(T::S3Bucket, "b", &[("ManagedBy", "Terraform")])),
             Some((Terraform, Certain))
