@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { relativeTime } from "../format";
-import type { Account, ContextEntry, CurStatus, NavTarget, Settings, Workspace } from "../types";
+import type { Account, ContextEntry, CurStatus, NavTarget, Settings, SyncProgress, Workspace } from "../types";
 import { AccountRow } from "./AccountRow";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { SsoLoginDialog } from "./SsoLoginDialog";
@@ -15,6 +15,7 @@ import { ChatPanel } from "./ChatPanel";
 import { Callout } from "./Callout";
 import { CurSetupDialog } from "./CurSetupDialog";
 import { ContextView } from "./ContextView";
+import { SyncOverlay } from "./SyncOverlay";
 
 type Confirm = { kind: "remove-account"; account: Account } | { kind: "delete-workspace" };
 
@@ -64,6 +65,9 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
   const [testing, setTesting] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<Confirm | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // Accounts of a sync the user started here (the overlay), and its last stage.
+  const [overlay, setOverlay] = useState<Account[] | null>(null);
+  const [progress, setProgress] = useState<SyncProgress | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -92,6 +96,13 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
     };
   }, [workspace.id, dataVersion]);
 
+  useEffect(() => {
+    const unlisten = api.onSyncProgress(setProgress);
+    return () => {
+      void unlisten.then((f) => f());
+    };
+  }, []);
+
   // Sync runs in the backend (manual or scheduled); refresh when it reports progress.
   useEffect(() => {
     const unlisten = api.onSyncChanged(() => {
@@ -103,21 +114,22 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
     };
   }, [reload]);
 
-  const syncAll = async () => {
+  /** Runs a sync the user asked for behind the overlay, until it ends. */
+  const withOverlay = async (synced: Account[], run: () => Promise<unknown>) => {
+    setProgress(null);
+    setOverlay(synced);
     try {
-      await api.syncWorkspace(workspace.id);
+      await run();
     } catch (e) {
       setError(errorMessage(e));
+    } finally {
+      setOverlay(null);
     }
   };
 
-  const syncOne = async (account: Account) => {
-    try {
-      await api.syncAccount(account.id);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
+  const syncAll = () => withOverlay(accounts ?? [], () => api.syncWorkspace(workspace.id));
+
+  const syncOne = (account: Account) => withOverlay([account], () => api.syncAccount(account.id));
 
   const test = async (account: Account) => {
     setTesting((s) => new Set(s).add(account.id));
@@ -399,6 +411,13 @@ export function WorkspaceView({ workspace, settings, onChanged, onOpenSettings }
             setSsoAccount(null);
             void test(account);
           }}
+        />
+      )}
+      {overlay && (
+        <SyncOverlay
+          accounts={overlay}
+          progress={progress && overlay.some((a) => a.id === progress.account_id) ? progress : null}
+          onHide={() => setOverlay(null)}
         />
       )}
     </main>

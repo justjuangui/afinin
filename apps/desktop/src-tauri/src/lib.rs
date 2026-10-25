@@ -28,6 +28,8 @@ use tauri_plugin_opener::OpenerExt;
 
 /// Event telling the UI that an account's sync status or data changed.
 const SYNC_EVENT: &str = "sync-changed";
+/// Stages of a running sync, with the account they belong to.
+const SYNC_PROGRESS_EVENT: &str = "sync-progress";
 /// Payload: `{ workspace_id, stage, … }` while the assistant works on a turn.
 const ASSISTANT_PROGRESS_EVENT: &str = "assistant-progress";
 /// How often the background scheduler looks for accounts due for sync.
@@ -193,7 +195,12 @@ async fn run_sync(
     account_id: &str,
 ) -> CmdResult<AccountSyncReport> {
     let _ = app.emit(SYNC_EVENT, account_id);
-    let result = core.sync_account(account_id).await;
+    let progress = |stage: afinin_core::SyncStage| {
+        let mut payload = serde_json::to_value(stage).unwrap_or_default();
+        payload["account_id"] = serde_json::Value::String(account_id.to_owned());
+        let _ = app.emit(SYNC_PROGRESS_EVENT, payload);
+    };
+    let result = core.sync_account_with_progress(account_id, &progress).await;
     let _ = app.emit(SYNC_EVENT, account_id);
     result
 }

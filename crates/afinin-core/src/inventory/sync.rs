@@ -31,11 +31,14 @@ fn regional(config: &SdkConfig, region: &str) -> SdkConfig {
 }
 
 /// Scans `regions` (all enabled ones when empty) for one connected account.
+/// `on_region` gets (regions scanned, total) as scans finish; the global
+/// services count as one more.
 pub async fn sync_inventory(
     db: &Mutex<Storage>,
     config: &SdkConfig,
     source_account: &str,
     regions: &[String],
+    on_region: &(dyn Fn(usize, usize) + Send + Sync),
 ) -> Result<InventoryReport> {
     let identity = aws_sdk_sts::Client::new(config)
         .get_caller_identity()
@@ -65,6 +68,13 @@ pub async fn sync_inventory(
             Vec::new()
         }
     };
+    let total = regions.len() + 1;
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let finished = || {
+        let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        on_region(n, total);
+    };
+    on_region(0, total);
     let mut scans: Vec<(String, Collected)> = futures::stream::iter(regions.iter().cloned())
         .map(|region| {
             let account = account.clone();
@@ -80,6 +90,7 @@ pub async fn sync_inventory(
                     lightsail,
                 )
                 .await;
+                finished();
                 (region, found)
             }
         })
@@ -92,6 +103,7 @@ pub async fn sync_inventory(
         region: HOME_REGION,
     })
     .await;
+    finished();
     scans.push(("global".into(), global));
 
     // Tags from every region's tagging API apply to every scan (S3 buckets

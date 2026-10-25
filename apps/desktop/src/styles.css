@@ -603,3 +603,29 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .md-table tr:last-child td { border-bottom: none; }
 .iac-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 2px 0 8px; }
 .iac-bar span { display: block; height: 100%; background: var(--accent); }
+
+/* Sync overlay: Afinín's tuning fork vibrating while a sync runs. */
+.sync-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(3px); }
+.sync-card { width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 28px 24px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 20px 50px rgb(0 0 0 / 0.25); }
+.sync-card h2 { margin: 6px 0 0; font-size: 18px; }
+.sync-stage { margin: 0; font-weight: 600; }
+.sync-card .muted { margin: 0; }
+.sync-fork { width: 88px; height: 88px; stroke: var(--accent); overflow: visible; }
+.sync-fork-prongs { transform-origin: 256px 330px; animation: sync-hum 0.18s ease-in-out infinite alternate; }
+.sync-wave { opacity: 0; transform-origin: 256px 236px; animation: sync-ring 1.8s ease-out infinite; }
+@keyframes sync-hum { from { transform: rotate(-0.8deg); } to { transform: rotate(0.8deg); } }
+@keyframes sync-ring { 0% { opacity: 0.9; transform: scale(0.85); } 100% { opacity: 0; transform: scale(1.45); } }
+.sync-progress { width: 100%; height: 6px; margin: 6px 0 4px; border-radius: 3px; background: var(--border); overflow: hidden; position: relative; }
+.sync-progress span { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.sync-progress .indeterminate { width: 35%; position: absolute; animation: sync-slide 1.4s ease-in-out infinite; }
+@keyframes sync-slide { 0% { left: -35%; } 100% { left: 100%; } }
+.sync-tip { width: 100%; margin: 10px 0 4px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); text-align: left; }
+.sync-tip figcaption { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
+.sync-tip p { margin: 6px 0 4px; min-height: 3.2em; animation: sync-fade 0.4s ease; }
+@keyframes sync-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.sync-tip-nav { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .sync-fork-prongs, .sync-wave, .sync-progress .indeterminate, .sync-tip p { animation: none; }
+  .sync-wave { opacity: 0.6; }
+  .sync-progress .indeterminate { left: 0; width: 100%; opacity: 0.4; }
+}
