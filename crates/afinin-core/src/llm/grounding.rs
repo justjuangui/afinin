@@ -33,8 +33,8 @@ fn figures(text: &str) -> Vec<Figure> {
     figures_with(text, false)
 }
 
-/// As [`figures`]; `small` also keeps plain numbers under 100 (a table
-/// column of amounts written without a currency).
+/// As [`figures`]; `small` also keeps plain numbers under 100 and
+/// year-like ones (a table column of amounts written without a currency).
 fn figures_with(text: &str, small: bool) -> Vec<Figure> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
@@ -103,7 +103,9 @@ fn figures_with(text: &str, small: bool) -> Vec<Figure> {
             before.contains("DSU") // "USD " reversed
         };
         let is_year = !raw.contains(['.', ',']) && (1990.0..=2100.0).contains(&value);
-        if !percent && !money && suffix_len == 0 && ((value < 100.0 && !small) || is_year) {
+        // `small` (expected values) keeps every plain number: a table cell of
+        // 2000 is an amount there, and full dates are skipped above anyway.
+        if !small && !percent && !money && suffix_len == 0 && (value < 100.0 || is_year) {
             continue;
         }
         let decimals = digits.split_once('.').map_or(0, |(_, d)| d.len() as i32);
