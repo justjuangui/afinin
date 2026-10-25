@@ -148,7 +148,7 @@ async fn savings_plans(
     Ok(())
 }
 
-/// Services Cost Explorer reports reservations for, EC2 first.
+/// Services Cost Explorer reports reservations for.
 pub const RI_SERVICES: &[&str] = &[
     "Amazon Elastic Compute Cloud - Compute",
     "Amazon Relational Database Service",
@@ -169,8 +169,8 @@ fn service_filter(service: &str) -> Expression {
 }
 
 /// Reservation utilization and coverage of one service. Returns whether the
-/// row is worth showing: the service has reservations, or it is EC2 (its
-/// coverage says how much on-demand compute could be reserved).
+/// service has reservations; without any, the row (0% of nothing) is noise
+/// and coverage isn't fetched.
 async fn reservations(
     client: &Client,
     start: &str,
@@ -187,13 +187,14 @@ async fn reservations(
         .send()
         .await
     {
+        // AWS answers even without reservations, with zero purchased hours.
         Ok(out) => match out.total() {
-            Some(t) => {
+            Some(t) if pct(t.purchased_hours()).is_some_and(|h| h > 0.0) => {
                 s.utilization_pct = pct(t.utilization_percentage());
                 // Cost Explorer doesn't report unused RI cost directly; utilization says enough.
                 true
             }
-            None => false,
+            _ => false,
         },
         Err(e)
             if e.as_service_error()
@@ -203,7 +204,7 @@ async fn reservations(
         }
         Err(e) => return Err(aws_err(e)),
     };
-    if !has_reservations && service != RI_SERVICES[0] {
+    if !has_reservations {
         return Ok(false);
     }
     *calls += 1;
