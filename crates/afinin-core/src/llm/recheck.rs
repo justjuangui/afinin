@@ -106,7 +106,8 @@ mod tests {
         assert!(!check_expectations("Refunds: $-500.", &["$500".into()])[0].met);
         assert!(check_expectations("A credit of -$500 [1].", &["-$500".into()])[0].met);
         assert!(!check_expectations("Spend fell 12.5%.", &["-12.5%".into()])[0].met);
-        // Tables often drop the currency; small amounts still count.
+        // Tables often drop the currency; small and year-like amounts count.
+        assert!(check_expectations("| Total | 2000 |", &["$2000".into()])[0].met);
         assert!(check_expectations("| 1 | Static IP | 3.65 [1] |", &["$3.65".into()])[0].met);
         assert!(check_expectations("Spend was USD 980.", &["USD 980".into()])[0].met);
         // Abbreviated answers count within 5%.
