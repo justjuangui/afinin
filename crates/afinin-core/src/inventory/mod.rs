@@ -345,15 +345,24 @@ impl Collected {
                 r.resource_type,
                 ResourceType::S3Bucket | ResourceType::CloudFrontDistribution
             );
+            // (identifier, only for this CloudFormation type). A cache
+            // cluster is listed per node; the stack records its replication
+            // group.
             let keys = [
-                Some(r.arn.as_str()),
-                Some(r.native_id.as_str()),
-                r.attrs.get("url").and_then(|v| v.as_str()),
-                r.attrs.get("public_ip").and_then(|v| v.as_str()),
+                (Some(r.arn.as_str()), None),
+                (Some(r.native_id.as_str()), None),
+                (r.attrs.get("url").and_then(|v| v.as_str()), None),
+                (r.attrs.get("public_ip").and_then(|v| v.as_str()), None),
+                (
+                    r.attrs.get("replication_group").and_then(|v| v.as_str()),
+                    Some("AWS::ElastiCache::ReplicationGroup"),
+                ),
             ];
-            let found = keys.into_iter().flatten().find_map(|k| {
-                by_id.get(k)?.iter().copied().find(|(st, m)| {
-                    types.contains(&m.cfn_type.as_str()) && (global || st.region == r.region)
+            let found = keys.into_iter().find_map(|(k, only)| {
+                by_id.get(k?)?.iter().copied().find(|(st, m)| {
+                    only.is_none_or(|t| m.cfn_type == t)
+                        && types.contains(&m.cfn_type.as_str())
+                        && (global || st.region == r.region)
                 })
             });
             if let Some((st, m)) = found {
@@ -422,6 +431,12 @@ mod tests {
             Resource::new(ResourceType::DynamoDbTable, "arn:table", "1", "us-east-1", "handler"),
             // A function with that name in a region where no stack has it.
             Resource::new(ResourceType::LambdaFunction, "arn:fn-ap", "1", "ap-south-1", "handler"),
+            // A node of a stack's replication group.
+            {
+                let mut c = Resource::new(ResourceType::ElastiCacheCluster, "arn:redis-001", "1", "us-east-1", "redis-001");
+                c.attr("replication_group", Some("redis".into()));
+                c
+            },
             // A Name tag that looks like a stack member's ID proves nothing.
             {
                 let mut sg = Resource::new(ResourceType::SecurityGroup, "arn:sg-manual", "1", "us-east-1", "sg-0manual");
@@ -437,6 +452,7 @@ mod tests {
                     ("handler", "HandlerUs", "AWS::Lambda::Function"),
                     ("assets", "Assets", "AWS::S3::Bucket"),
                     ("sg-0stack", "WebSg", "AWS::EC2::SecurityGroup"),
+                    ("redis", "Cache", "AWS::ElastiCache::ReplicationGroup"),
                 ],
             ),
             stack("eu-west-1", &[("handler", "HandlerEu", "AWS::Lambda::Function")]),
@@ -454,6 +470,7 @@ mod tests {
         assert_eq!(attr(3, iac::ATTR_STACK), None);
         assert_eq!(attr(4, iac::ATTR_STACK), None, "a table isn't the stack's function");
         assert_eq!(attr(5, iac::ATTR_STACK), None, "no cross-region match");
-        assert_eq!(attr(6, iac::ATTR_STACK), None, "names are not identifiers");
+        assert_eq!(attr(6, iac::ATTR_LOGICAL_ID).as_deref(), Some("Cache"));
+        assert_eq!(attr(7, iac::ATTR_STACK), None, "names are not identifiers");
     }
 }

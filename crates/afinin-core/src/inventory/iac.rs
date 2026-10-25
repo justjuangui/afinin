@@ -287,12 +287,27 @@ pub fn detect(r: &Resource) -> Option<ManagedBy> {
         {
             return Some(m.in_stack(Some(stack)));
         }
-        let mut evidence = match attr(ATTR_LOGICAL_ID) {
+        let logical = attr(ATTR_LOGICAL_ID);
+        let mut evidence = match logical {
             Some(id) => format!("{id} in CloudFormation stack {stack}"),
             None => format!("in CloudFormation stack {stack}"),
         };
         if let Some(reason) = attr(ATTR_TOOL_REASON) {
             evidence.push_str(&format!("; {reason}"));
+        }
+        // CDK apps can turn off the metadata resource; their hashed logical
+        // IDs still give them away (the stack itself is certain).
+        if tool == IacTool::CloudFormation
+            && let Some(id) = logical.filter(|id| cdk_logical_id(id))
+        {
+            return Some(
+                ManagedBy::new(
+                    IacTool::Cdk,
+                    Confidence::Likely,
+                    format!("{evidence}; logical ID {id} has a CDK hash suffix"),
+                )
+                .in_stack(Some(stack)),
+            );
         }
         return Some(ManagedBy::new(tool, Confidence::Certain, evidence).in_stack(Some(stack)));
     }
@@ -471,6 +486,13 @@ mod tests {
         in_stack.attrs.insert(ATTR_LOGICAL_ID.into(), "QueueA1B2C3D4".into());
         assert_eq!(tool(&in_stack), Some((Cdk, Certain)));
         assert_eq!(detect(&in_stack).unwrap().stack.as_deref(), Some("api"));
+
+        // A CloudFormation stack without CDK metadata, but CDK logical IDs.
+        let mut quiet_cdk = res(T::SqsQueue, "q2", &[]);
+        quiet_cdk.attrs.insert(ATTR_STACK.into(), "api".into());
+        quiet_cdk.attrs.insert(ATTR_TOOL.into(), "cloud_formation".into());
+        quiet_cdk.attrs.insert(ATTR_LOGICAL_ID.into(), "JobsQueueA1B2C3D4".into());
+        assert_eq!(tool(&quiet_cdk), Some((Cdk, Likely)));
 
         // In a plain CloudFormation stack, the SAM tag names the tool.
         let mut sam = res(T::LambdaFunction, "fn", &[("lambda:createdBy", "SAM")]);
