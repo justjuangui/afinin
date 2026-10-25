@@ -221,14 +221,29 @@ impl CostSource for CostExplorer {
             .get_cost_forecast()
             .time_period(interval(start, end)?)
             .metric(ce_metric)
-            .granularity(aws_sdk_costexplorer::types::Granularity::Monthly)
+            // Daily, summed here: with monthly granularity AWS answers with
+            // its estimate for the whole month, actuals included, which the
+            // overview then added to the actuals again (twice the spend so far).
+            .granularity(aws_sdk_costexplorer::types::Granularity::Daily)
             .send()
             .await;
         match result {
-            Ok(out) => Ok(out.total().map(|t| Forecast {
-                amount: t.amount().and_then(|a| a.parse().ok()).unwrap_or(0.0),
-                unit: t.unit().unwrap_or("USD").to_owned(),
-            })),
+            Ok(out) => {
+                let days = out.forecast_results_by_time();
+                if days.is_empty() {
+                    return Ok(None);
+                }
+                let amount = days
+                    .iter()
+                    .filter_map(|d| d.mean_value()?.parse::<f64>().ok())
+                    .sum();
+                let unit = out
+                    .total()
+                    .and_then(|t| t.unit())
+                    .unwrap_or("USD")
+                    .to_owned();
+                Ok(Some(Forecast { amount, unit }))
+            }
             Err(e)
                 if e.as_service_error()
                     .is_some_and(|s| s.is_data_unavailable_exception()) =>
