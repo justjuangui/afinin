@@ -316,6 +316,8 @@ export interface Finding {
 
 export interface CommitmentSummary {
   kind: "savings_plans" | "reservations";
+  /** Reservations: the service they cover. */
+  service?: string | null;
   coverage_pct: number | null;
   utilization_pct: number | null;
   on_demand_cost: number | null;

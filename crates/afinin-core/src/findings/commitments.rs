@@ -6,7 +6,9 @@
 
 use aws_config::SdkConfig;
 use aws_sdk_costexplorer::Client;
-use aws_sdk_costexplorer::types::{AnomalyDateInterval, DateInterval, Granularity};
+use aws_sdk_costexplorer::types::{
+    AnomalyDateInterval, DateInterval, Dimension, DimensionValues, Expression, Granularity,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::cost::source::CostExplorer;
@@ -17,6 +19,9 @@ use crate::inventory::collect::aws_err;
 pub struct CommitmentSummary {
     /// `savings_plans` or `reservations`.
     pub kind: String,
+    /// Reservations: the Cost Explorer service they cover (one row each).
+    #[serde(default)]
+    pub service: Option<String>,
     pub coverage_pct: Option<f64>,
     pub utilization_pct: Option<f64>,
     /// On-demand spend not covered by commitments.
@@ -72,15 +77,21 @@ pub async fn fetch(
         Ok(()) => out.push(sp),
         Err(e) => warnings.push(format!("Savings Plans: {e}")),
     }
-    let mut ri = CommitmentSummary {
-        kind: "reservations".into(),
-        start: start.into(),
-        end: end.into(),
-        ..Default::default()
-    };
-    match reservations(&client, start, end, &mut ri, &mut calls).await {
-        Ok(()) => out.push(ri),
-        Err(e) => warnings.push(format!("Reservations: {e}")),
+    // Cost Explorer reports reservations for one service per request and
+    // defaults to EC2, so an RDS or ElastiCache reservation would never show.
+    for service in RI_SERVICES {
+        let mut ri = CommitmentSummary {
+            kind: "reservations".into(),
+            service: Some((*service).into()),
+            start: start.into(),
+            end: end.into(),
+            ..Default::default()
+        };
+        match reservations(&client, start, end, service, &mut ri, &mut calls).await {
+            Ok(true) => out.push(ri),
+            Ok(false) => {}
+            Err(e) => warnings.push(format!("Reservations ({service}): {e}")),
+        }
     }
     (out, calls, warnings)
 }
@@ -137,35 +148,69 @@ async fn savings_plans(
     Ok(())
 }
 
+/// Services Cost Explorer reports reservations for, EC2 first.
+pub const RI_SERVICES: &[&str] = &[
+    "Amazon Elastic Compute Cloud - Compute",
+    "Amazon Relational Database Service",
+    "Amazon ElastiCache",
+    "Amazon Redshift",
+    "Amazon Elasticsearch Service",
+];
+
+fn service_filter(service: &str) -> Expression {
+    Expression::builder()
+        .dimensions(
+            DimensionValues::builder()
+                .key(Dimension::Service)
+                .values(service)
+                .build(),
+        )
+        .build()
+}
+
+/// Reservation utilization and coverage of one service. Returns whether the
+/// row is worth showing: the service has reservations, or it is EC2 (its
+/// coverage says how much on-demand compute could be reserved).
 async fn reservations(
     client: &Client,
     start: &str,
     end: &str,
+    service: &str,
     s: &mut CommitmentSummary,
     calls: &mut u32,
-) -> Result<()> {
+) -> Result<bool> {
     *calls += 1;
-    match client
+    let has_reservations = match client
         .get_reservation_utilization()
         .time_period(interval(start, end)?)
+        .filter(service_filter(service))
         .send()
         .await
     {
-        Ok(out) => {
-            if let Some(t) = out.total() {
+        Ok(out) => match out.total() {
+            Some(t) => {
                 s.utilization_pct = pct(t.utilization_percentage());
                 // Cost Explorer doesn't report unused RI cost directly; utilization says enough.
+                true
             }
-        }
+            None => false,
+        },
         Err(e)
             if e.as_service_error()
-                .is_some_and(|s| s.is_data_unavailable_exception()) => {}
+                .is_some_and(|s| s.is_data_unavailable_exception()) =>
+        {
+            false
+        }
         Err(e) => return Err(aws_err(e)),
+    };
+    if !has_reservations && service != RI_SERVICES[0] {
+        return Ok(false);
     }
     *calls += 1;
     match client
         .get_reservation_coverage()
         .time_period(interval(start, end)?)
+        .filter(service_filter(service))
         .send()
         .await
     {
@@ -182,7 +227,7 @@ async fn reservations(
                 .is_some_and(|s| s.is_data_unavailable_exception()) => {}
         Err(e) => return Err(aws_err(e)),
     }
-    Ok(())
+    Ok(true)
 }
 
 /// AWS Cost Anomaly Detection findings since `start` (one billable request per page).
