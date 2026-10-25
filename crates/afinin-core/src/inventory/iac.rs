@@ -119,8 +119,8 @@ impl ManagedBy {
 
 /// Resource types that are created as a side effect of others (network
 /// interfaces of instances, Lambda or load balancers; snapshots taken by
-/// backups): they inherit from what they are attached to and don't count
-/// toward coverage on their own.
+/// backups): they don't count toward coverage on their own. Network
+/// interfaces inherit from their owner (see [`detect_all`]).
 pub fn is_derived(t: ResourceType) -> bool {
     matches!(t, ResourceType::NetworkInterface | ResourceType::EbsSnapshot)
 }
@@ -334,14 +334,24 @@ pub fn detect_all<'a>(
     let by_arn: HashMap<&str, &Resource> = resources.iter().map(|r| (r.arn.as_str(), r)).collect();
     let mut inherited = Vec::new();
     for r in resources {
+        // Volumes and network interfaces only. Snapshots don't inherit: they
+        // are usually taken by backups, not by the tool that made the volume.
         if found.contains_key(r.arn.as_str())
-            || !(is_derived(r.resource_type) || r.resource_type == ResourceType::EbsVolume)
+            || !matches!(
+                r.resource_type,
+                ResourceType::EbsVolume | ResourceType::NetworkInterface
+            )
         {
             continue;
         }
         // instance → volume (Attached), owner → network interface (Owns).
+        // A snapshot → volume edge points the other way round: never an owner.
         let owner = edges.iter().find_map(|e| {
             if e.target != r.arn || !matches!(e.kind, RelationKind::Attached | RelationKind::Owns) {
+                return None;
+            }
+            let source = by_arn.get(e.source.as_str())?;
+            if source.resource_type == ResourceType::EbsSnapshot {
                 return None;
             }
             Some((e.source.as_str(), found.get(e.source.as_str())?))
@@ -500,7 +510,10 @@ mod tests {
         let volume = res(T::EbsVolume, "vol-1", &[]);
         let eni = res(T::NetworkInterface, "eni-1", &[]);
         let bucket = res(T::S3Bucket, "manual", &[]);
-        let resources = vec![instance, volume, eni, bucket];
+        // A tagged snapshot of a hand-made volume says nothing about the volume.
+        let snapshot = res(T::EbsSnapshot, "snap-1", &[("ManagedBy", "terraform")]);
+        let manual_volume = res(T::EbsVolume, "vol-2", &[]);
+        let resources = vec![instance, volume, eni, bucket, snapshot, manual_volume];
         let edges = vec![
             GraphEdge {
                 source: "arn:i-1".into(),
@@ -512,19 +525,25 @@ mod tests {
                 target: "arn:eni-1".into(),
                 kind: RelationKind::Owns,
             },
+            GraphEdge {
+                source: "arn:snap-1".into(),
+                target: "arn:vol-2".into(),
+                kind: RelationKind::Attached,
+            },
         ];
         let found = detect_all(&resources, &edges);
         let vol = &found["arn:vol-1"];
         assert_eq!((vol.tool, vol.confidence), (IacTool::CloudFormation, Confidence::Likely));
         assert!(vol.evidence.starts_with("attached to i-1"), "{}", vol.evidence);
         assert!(found.contains_key("arn:eni-1"));
+        assert!(!found.contains_key("arn:vol-2"), "not from its snapshot");
 
         let s = summarize(&resources, &found);
-        // The network interface doesn't count; the volume and instance do.
-        assert_eq!((s.total, s.unmanaged), (3, 1));
+        // The network interface and snapshot don't count; the rest do.
+        assert_eq!((s.total, s.unmanaged), (4, 2));
         assert_eq!(s.by_tool[0].resources, 2);
         assert_eq!(s.by_tool[0].certain, 1);
-        assert_eq!(s.unmanaged_by_type[0].resource_type, T::S3Bucket);
-        assert_eq!(s.unmanaged_by_type[0].count, 1);
+        let unmanaged: Vec<_> = s.unmanaged_by_type.iter().map(|t| (t.resource_type, t.count)).collect();
+        assert!(unmanaged.contains(&(T::S3Bucket, 1)) && unmanaged.contains(&(T::EbsVolume, 1)));
     }
 }
