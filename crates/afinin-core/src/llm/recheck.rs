@@ -101,6 +101,11 @@ mod tests {
         // Units: an amount is not a percentage, and the other way round.
         assert!(!check_expectations("Up 100% [1].", &["$100".into()])[0].met);
         assert!(!check_expectations("It cost $12.5.", &["12.5%".into()])[0].met);
+        // A credit is not a charge.
+        assert!(!check_expectations("A credit of -$500 [1].", &["$500".into()])[0].met);
+        assert!(!check_expectations("Refunds: $-500.", &["$500".into()])[0].met);
+        assert!(check_expectations("A credit of -$500 [1].", &["-$500".into()])[0].met);
+        assert!(!check_expectations("Spend fell 12.5%.", &["-12.5%".into()])[0].met);
         // Tables often drop the currency; small amounts still count.
         assert!(check_expectations("| 1 | Static IP | 3.65 [1] |", &["$3.65".into()])[0].met);
         assert!(check_expectations("Spend was USD 980.", &["USD 980".into()])[0].met);

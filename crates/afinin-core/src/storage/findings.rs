@@ -210,38 +210,43 @@ impl Storage {
 
     // ---- commitments & AWS anomalies --------------------------------------
 
-    /// When commitments were last fetched. None also for rows saved before
-    /// reservations were split by service, so they are fetched again.
+    /// When commitments were last fully fetched: the oldest row, so a row
+    /// kept after a failed request makes the next sync try again. None also
+    /// for rows saved before reservations were split by service.
     pub(crate) fn commitments_fetched_at(&self, source: &str) -> Result<Option<String>> {
         Ok(self.conn.query_row(
-            "SELECT CASE WHEN bool_or(kind = 'reservations') THEN NULL ELSE max(fetched_at) END
+            "SELECT CASE WHEN bool_or(kind = 'reservations') THEN NULL ELSE min(fetched_at) END
              FROM commitments WHERE source_account = ?",
             params![source],
             |r| r.get(0),
         )?)
     }
 
+    /// Replaces the rows of the keys that were `checked` (a service without
+    /// reservations any more loses its row) and of legacy rows; rows of keys
+    /// whose request failed are kept.
     pub(crate) fn save_commitments(
         &self,
         source: &str,
         summaries: &[CommitmentSummary],
+        checked: &[String],
     ) -> Result<()> {
         let now = now_rfc3339();
-        // Replace the account's rows: services without reservations any more
-        // (and rows from before the split by service) must go.
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "DELETE FROM commitments WHERE source_account = ?",
+            "DELETE FROM commitments WHERE source_account = ? AND kind = 'reservations'",
             params![source],
         )?;
+        for key in checked {
+            tx.execute(
+                "DELETE FROM commitments WHERE source_account = ? AND kind = ?",
+                params![source, key],
+            )?;
+        }
         for s in summaries {
-            let key = match &s.service {
-                Some(service) => format!("{}:{service}", s.kind),
-                None => s.kind.clone(),
-            };
             tx.execute(
                 "INSERT OR REPLACE INTO commitments VALUES (?, ?, ?, ?)",
-                params![source, key, json(s)?, now],
+                params![source, s.key(), json(s)?, now],
             )?;
         }
         tx.commit()?;
@@ -314,15 +319,13 @@ mod tests {
             service: service.map(Into::into),
             ..Default::default()
         };
-        db.save_commitments(
-            "acc",
-            &[
-                row("savings_plans", None),
-                row("reservations", Some("Amazon Elastic Compute Cloud - Compute")),
-                row("reservations", Some("Amazon Relational Database Service")),
-            ],
-        )
-        .unwrap();
+        let rows = [
+            row("savings_plans", None),
+            row("reservations", Some("Amazon Elastic Compute Cloud - Compute")),
+            row("reservations", Some("Amazon Relational Database Service")),
+        ];
+        let keys: Vec<String> = rows.iter().map(CommitmentSummary::key).collect();
+        db.save_commitments("acc", &rows, &keys).unwrap();
         assert!(db.commitments_fetched_at("acc").unwrap().is_some());
         let keys: Vec<String> = db
             .conn
@@ -339,6 +342,32 @@ mod tests {
                 "reservations:Amazon Relational Database Service",
                 "savings_plans"
             ]
+        );
+
+        // A later fetch where RDS failed and EC2 no longer has reservations:
+        // RDS keeps its row (and its old time, so the next sync retries),
+        // EC2 loses its row.
+        db.conn
+            .execute("UPDATE commitments SET fetched_at = '2026-01-01T00:00:00Z'", [])
+            .unwrap();
+        let ec2 = crate::findings::commitments::key(
+            "reservations",
+            Some("Amazon Elastic Compute Cloud - Compute"),
+        );
+        db.save_commitments("acc", &rows[..1], &[rows[0].key(), ec2])
+            .unwrap();
+        let kept: Vec<String> = db
+            .conn
+            .prepare("SELECT kind FROM commitments WHERE source_account = 'acc' ORDER BY kind")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(kept, ["reservations:Amazon Relational Database Service", "savings_plans"]);
+        assert_eq!(
+            db.commitments_fetched_at("acc").unwrap().as_deref(),
+            Some("2026-01-01T00:00:00Z")
         );
     }
 }
