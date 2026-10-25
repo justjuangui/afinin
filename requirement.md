@@ -70,6 +70,7 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
 - **FR-23** Interactive graph view: zoom, filter by account/region/VPC/tag/service (including resources *missing* a tag), search, click a node for details. Two layouts of the same graph: **Flow** (layered by role: entry points → compute → data, with a minimap) and **Network** (force-directed; isolated resources hidden behind a "show them" action; labels hidden when zoomed out).
 - **FR-24** **Cost overlay** on the graph: node size/color by monthly cost (requires CUR for per-resource cost; otherwise aggregated by service).
 - **FR-25** Group resources into logical "applications" by tag (e.g. `app`, `env`) or manual grouping, and show the cost per application.
+- **FR-26** **Infrastructure as code detection**: tell which tool made each resource — CloudFormation, CDK, SAM, Serverless Framework, Elastic Beanstalk, Copilot, Amplify, Terraform or Pulumi — with a confidence (certain / likely / hint) and the evidence. Sources, read-only: CloudFormation stack membership (`ListStacks`, `ListStackResources`; CDK stacks carry `AWS::CDK::Metadata`), tags tools add (`aws:cloudformation:*`, `lambda:createdBy=SAM`, `copilot-application`…), convention tags (`ManagedBy=terraform`) and generated names (`terraform-2024…`). Volumes and network interfaces inherit from what they are attached to. Shown in resource details, as a graph filter, as a coverage summary in Findings, and to the assistant. Stack templates are not read (they can contain secrets).
 
 ### 4.4 Anomalies, waste & patterns
 
