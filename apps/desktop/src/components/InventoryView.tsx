@@ -66,6 +66,12 @@ const SHORT: Record<string, string> = {
   "lightsail:disk": "LSD",
   "lightsail:database": "LSDB",
   "lightsail:static-ip": "LSIP",
+  "route53:hostedzone": "R53",
+  "secretsmanager:secret": "SEC",
+  "kms:key": "KMS",
+  "ecr:repository": "ECR",
+  "elasticfilesystem:file-system": "EFS",
+  "logs:log-group": "LOG",
 };
 
 const KIND_LABEL: Record<RelationKind, string> = {
@@ -956,6 +962,15 @@ function listPriceNote(node: GraphNode): string {
   if (node.resource_type === "elasticloadbalancing:loadbalancer")
     return "Hourly price only; capacity units (LCUs) are billed on top.";
   if (node.resource_type === "ec2:elastic-ip") return "Every public IPv4 address is billed hourly, attached or not.";
+  if (node.resource_type === "logs:log-group")
+    return "Storage only; ingesting logs ($0.50/GB) is usually the bigger charge and comes on top.";
+  if (node.resource_type === "ecr:repository")
+    return "Image sizes count shared layers once per image, so this is an upper bound.";
+  if (node.resource_type === "secretsmanager:secret") return "Per secret; API calls ($0.05 per 10,000) come on top.";
+  if (node.resource_type === "kms:key") return "Per customer-managed key, enabled or disabled; requests come on top.";
+  if (node.resource_type === "elasticfilesystem:file-system")
+    return "Storage by class (and provisioned throughput); reads and writes from Infrequent Access come on top.";
+  if (node.resource_type === "route53:hostedzone") return "Per hosted zone; DNS queries come on top.";
   return "AWS public price, not measured spend.";
 }
 

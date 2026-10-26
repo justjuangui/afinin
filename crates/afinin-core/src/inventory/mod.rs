@@ -88,6 +88,12 @@ resource_types! {
     LightsailDisk => "lightsail:disk", "Lightsail disk", Storage, LIGHTSAIL;
     LightsailDatabase => "lightsail:database", "Lightsail database", Data, LIGHTSAIL;
     LightsailStaticIp => "lightsail:static-ip", "Lightsail static IP", Network, LIGHTSAIL;
+    Route53HostedZone => "route53:hostedzone", "Route 53 hosted zone", Edge, Some("Amazon Route 53");
+    SecretsManagerSecret => "secretsmanager:secret", "Secrets Manager secret", Data, Some("AWS Secrets Manager");
+    KmsKey => "kms:key", "KMS key", Data, Some("AWS Key Management Service");
+    EcrRepository => "ecr:repository", "ECR repository", Storage, Some("Amazon EC2 Container Registry (ECR)");
+    EfsFileSystem => "elasticfilesystem:file-system", "EFS file system", Storage, Some("Amazon Elastic File System");
+    LogGroup => "logs:log-group", "CloudWatch log group", Storage, Some("AmazonCloudWatch");
 }
 
 impl ResourceType {
@@ -102,7 +108,7 @@ impl ResourceType {
     /// Shown in the graph only when explicitly selected by type: there can be
     /// thousands and they connect to nothing running.
     pub fn is_bulk(self) -> bool {
-        matches!(self, Self::EbsSnapshot)
+        matches!(self, Self::EbsSnapshot | Self::LogGroup)
     }
 
     /// Whether AWS lets this resource carry tags. Lightsail static IPs can't,
@@ -155,6 +161,12 @@ impl ResourceType {
             Self::LightsailDisk => &["AWS::Lightsail::Disk"],
             Self::LightsailDatabase => &["AWS::Lightsail::Database"],
             Self::LightsailStaticIp => &["AWS::Lightsail::StaticIp"],
+            Self::Route53HostedZone => &["AWS::Route53::HostedZone"],
+            Self::SecretsManagerSecret => &["AWS::SecretsManager::Secret"],
+            Self::KmsKey => &["AWS::KMS::Key"],
+            Self::EcrRepository => &["AWS::ECR::Repository"],
+            Self::EfsFileSystem => &["AWS::EFS::FileSystem"],
+            Self::LogGroup => &["AWS::Logs::LogGroup"],
         }
     }
 

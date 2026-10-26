@@ -13,6 +13,7 @@ mod elb;
 mod lambda;
 pub mod lightsail;
 mod messaging;
+mod platform;
 mod tagging;
 
 use aws_config::SdkConfig;
@@ -103,22 +104,31 @@ pub async fn collect_region(ctx: &Ctx<'_>, lightsail: bool) -> Collected {
             }
         },
     );
+    let (p, q, r2, s2, t) = futures::join!(
+        guarded("secretsmanager", r, platform::secrets(ctx)),
+        guarded("kms", r, platform::kms(ctx)),
+        guarded("ecr", r, platform::ecr(ctx)),
+        guarded("logs", r, platform::log_groups(ctx)),
+        guarded("elasticfilesystem", r, platform::efs(ctx)),
+    );
     let mut out = Collected::default();
-    for part in [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o] {
+    for part in [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r2, s2, t] {
         out.extend(part);
     }
     out
 }
 
-/// Services with a single global API (S3 bucket listing, CloudFront).
+/// Services with a single global API (S3 bucket listing, CloudFront, Route 53).
 /// `ctx` must be bound to [`HOME_REGION`].
 pub async fn collect_global(ctx: &Ctx<'_>) -> Collected {
-    let (s3, cf) = futures::join!(
+    let (s3, cf, dns) = futures::join!(
         guarded("s3", ctx.region, data::s3(ctx)),
         guarded("cloudfront", ctx.region, cloudfront::collect(ctx)),
+        guarded("route53", ctx.region, platform::route53(ctx)),
     );
     let mut out = s3;
     out.extend(cf);
+    out.extend(dns);
     out
 }
 
