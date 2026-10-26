@@ -362,7 +362,7 @@ export interface ManagedBy {
 }
 
 export interface IacSummary {
-  /** Resources that count (network interfaces and snapshots excluded). */
+  /** Resources that count (network interfaces, snapshots and log groups excluded). */
   total: number;
   by_tool: { tool: IacTool; label: string; resources: number; certain: number }[];
   unmanaged: number;

@@ -17,6 +17,66 @@ use crate::inventory::collect::aws_err;
 
 pub const HOURS_PER_MONTH: f64 = 730.0;
 
+/// Built-in us-east-1 list prices, USD per month, for services billed per
+/// item or per GB stored (not fetched from the Price List API).
+pub mod builtin {
+    /// Per secret.
+    pub const SECRET: f64 = 0.40;
+    /// Per customer-managed key, enabled or disabled.
+    pub const KMS_KEY: f64 = 1.00;
+    /// Per GB of ECR image storage.
+    pub const ECR_GB: f64 = 0.10;
+    /// Per GB of CloudWatch Logs storage (archived data).
+    pub const LOGS_GB: f64 = 0.03;
+    /// Per GB of EFS storage by class (Regional / One Zone).
+    pub const EFS_STANDARD_GB: f64 = 0.30;
+    pub const EFS_ONE_ZONE_GB: f64 = 0.16;
+    pub const EFS_IA_GB: f64 = 0.016;
+    pub const EFS_ONE_ZONE_IA_GB: f64 = 0.0133;
+    pub const EFS_ARCHIVE_GB: f64 = 0.008;
+    /// Per MiB/s of provisioned EFS throughput.
+    pub const EFS_PROVISIONED_MIBPS: f64 = 6.00;
+    /// Per hosted zone (the first 25 of an account).
+    pub const ROUTE53_ZONE: f64 = 0.50;
+}
+
+/// Monthly list price of a resource billed per item or per GB stored
+/// (Secrets Manager, KMS, ECR, CloudWatch Logs, EFS, Route 53). Request,
+/// ingestion and transfer charges come on top. None for other types.
+pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
+    use crate::inventory::ResourceType as T;
+    let num = |k: &str| r.attrs.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let text = |k: &str| r.attrs.get(k).and_then(|v| v.as_str());
+    match r.resource_type {
+        // Secrets scheduled for deletion and keys pending deletion aren't billed.
+        T::SecretsManagerSecret if text("deleted").is_none() => Some(builtin::SECRET),
+        T::KmsKey if matches!(text("state"), Some("Enabled" | "Disabled")) => Some(builtin::KMS_KEY),
+        T::EcrRepository => Some(num("size_gib") * builtin::ECR_GB),
+        T::LogGroup => Some(num("stored_gib") * builtin::LOGS_GB),
+        T::EfsFileSystem => {
+            let one_zone = r.attrs.get("one_zone").and_then(|v| v.as_bool()) == Some(true);
+            let (standard, ia) = if one_zone {
+                (builtin::EFS_ONE_ZONE_GB, builtin::EFS_ONE_ZONE_IA_GB)
+            } else {
+                (builtin::EFS_STANDARD_GB, builtin::EFS_IA_GB)
+            };
+            let throughput = if text("throughput_mode") == Some("provisioned") {
+                num("provisioned_mibps") * builtin::EFS_PROVISIONED_MIBPS
+            } else {
+                0.0
+            };
+            Some(
+                num("standard_gib") * standard
+                    + num("ia_gib") * ia
+                    + num("archive_gib") * builtin::EFS_ARCHIVE_GB
+                    + throughput,
+            )
+        }
+        T::Route53HostedZone => Some(builtin::ROUTE53_ZONE),
+        _ => None,
+    }
+}
+
 /// A billable dimension we estimate.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PriceItem {

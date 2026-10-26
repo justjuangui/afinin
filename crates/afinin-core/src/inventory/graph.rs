@@ -166,7 +166,7 @@ fn list_price(r: &Resource, prices: &PriceBook) -> Option<f64> {
             .and_then(|t| t.as_str())
             .map(|t| monthly(PriceItem::LoadBalancerHour(t.to_owned()))),
         ResourceType::EbsVolume => Some(crate::findings::rules::volume_monthly_cost(prices, r).0),
-        _ => None,
+        _ => crate::findings::pricing::platform_monthly(r),
     }
 }
 

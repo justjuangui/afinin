@@ -124,10 +124,14 @@ impl ManagedBy {
 
 /// Resource types that are created as a side effect of others (network
 /// interfaces of instances, Lambda or load balancers; snapshots taken by
-/// backups): they don't count toward coverage on their own. Network
+/// backups; log groups that Lambda and other services create on first
+/// write): they don't count toward coverage on their own. Network
 /// interfaces inherit from their owner (see [`detect_all`]).
 pub fn is_derived(t: ResourceType) -> bool {
-    matches!(t, ResourceType::NetworkInterface | ResourceType::EbsSnapshot)
+    matches!(
+        t,
+        ResourceType::NetworkInterface | ResourceType::EbsSnapshot | ResourceType::LogGroup
+    )
 }
 
 /// CDK logical IDs end in an 8-character uppercase hex hash of the

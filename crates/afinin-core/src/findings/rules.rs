@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use time::Date;
 
-use super::pricing::{HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource};
+use super::pricing::{HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource, builtin, platform_monthly};
 use super::{Finding, FindingKind, FindingResource, SavingsBasis, Severity};
 use crate::cost::dates;
 use crate::inventory::graph::GraphEdge;
@@ -119,6 +119,12 @@ fn attached(r: &Resource) -> Option<bool> {
     r.attrs.get("attached").and_then(|v| v.as_bool())
 }
 
+/// Unused for this long, a secret, repository or key is worth a look.
+const IDLE_DAYS: i64 = 90;
+
+/// Log groups smaller than this without retention aren't worth a finding.
+const LOGS_MIN_GIB: f64 = 1.0;
+
 fn age_days(r: &Resource, key: &str, today: Date) -> Option<i64> {
     let created = str_attr(r, key)?;
     let date = dates::parse(created.get(..10)?).ok()?;
@@ -210,6 +216,130 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                 f.summary = "A Lightsail block storage disk not attached to any instance keeps billing for its full size.".into();
                 f.how_to_fix = "Check that no one needs the data. Create a disk snapshot if you might, then delete the disk: \
                                 Lightsail console → Storage → the disk → Delete."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // Never read in 90 days (or never, and older than that). Secrets
+            // another service owns (RDS, Redshift…) are its to manage.
+            T::SecretsManagerSecret
+                if str_attr(r, "deleted").is_none()
+                    && str_attr(r, "owning_service").is_none()
+                    && match age_days(r, "last_accessed", input.today) {
+                        Some(days) => days > IDLE_DAYS,
+                        None => age_days(r, "created", input.today).is_some_and(|d| d > IDLE_DAYS),
+                    } =>
+            {
+                let (savings, basis) = input.savings(r, builtin::SECRET);
+                let mut f = base("secret-unused", r)
+                    .evidence("last_accessed", str_attr(r, "last_accessed").unwrap_or("never"))
+                    .evidence("created", str_attr(r, "created"));
+                f.title = format!("Secret {} hasn't been read in {IDLE_DAYS}+ days", r.display_name());
+                f.summary = "Each secret is billed every month whether anything reads it or not.".into();
+                f.how_to_fix = "Check that no application, pipeline or person still needs it (search your code and \
+                                configuration for its name). Then delete it in the Secrets Manager console: deletion \
+                                waits 7–30 days, during which you can restore it."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // A disabled key can't be used but is still billed.
+            T::KmsKey if str_attr(r, "state") == Some("Disabled") => {
+                let (savings, basis) = input.savings(r, builtin::KMS_KEY);
+                let mut f = base("kms-key-disabled", r).evidence("key_id", r.native_id.as_str());
+                f.title = format!("Disabled KMS key {} is still billed", r.display_name());
+                f.summary = "Customer-managed keys cost the same enabled or disabled.".into();
+                f.how_to_fix = "Only if nothing encrypted with this key is still needed: data encrypted with a deleted key \
+                                can never be decrypted. Check CloudTrail for recent use and which resources reference it, \
+                                then schedule deletion in the KMS console (7–30 day waiting period, cancellable)."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // Nothing pulled or pushed in 90 days.
+            T::EcrRepository
+                if num_attr(r, "size_gib").is_some_and(|g| g >= 0.1)
+                    && match age_days(r, "last_pulled", input.today) {
+                        Some(days) => days > IDLE_DAYS,
+                        None => age_days(r, "last_pushed", input.today).is_some_and(|d| d > IDLE_DAYS),
+                    }
+                    && age_days(r, "last_pushed", input.today).is_none_or(|d| d > IDLE_DAYS) =>
+            {
+                let gib = num_attr(r, "size_gib").unwrap_or(0.0);
+                let (savings, basis) = input.savings(r, gib * builtin::ECR_GB);
+                let mut f = base("ecr-repository-idle", r)
+                    .evidence("last_pulled", str_attr(r, "last_pulled").unwrap_or("never recorded"))
+                    .evidence("last_pushed", str_attr(r, "last_pushed"))
+                    .evidence("size_gib", gib);
+                f.title = format!("ECR repository {} hasn't been used in {IDLE_DAYS}+ days", r.display_name());
+                f.summary = "No image was pulled or pushed recently, but all of them are still stored and billed. \
+                             Shared layers are counted once per image, so the saving is an upper bound."
+                    .into();
+                f.how_to_fix = "If no deployment, cluster or pipeline uses it any more, delete the repository or its \
+                                old images; otherwise add a lifecycle policy that keeps only recent images."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // Untagged images pile up without a lifecycle policy.
+            T::EcrRepository
+                if r.attrs.get("lifecycle_policy").and_then(|v| v.as_bool()) == Some(false)
+                    && num_attr(r, "untagged_size_gib").is_some_and(|g| g >= 0.5) =>
+            {
+                let gib = num_attr(r, "untagged_size_gib").unwrap_or(0.0);
+                let (savings, basis) = input.savings(r, gib * builtin::ECR_GB);
+                let mut f = base("ecr-untagged-images", r)
+                    .evidence("untagged_images", num_attr(r, "untagged_images"))
+                    .evidence("untagged_size_gib", gib);
+                f.title = format!("ECR repository {} keeps untagged images", r.display_name());
+                f.summary = "Without a lifecycle policy, every superseded image stays stored and billed. The size \
+                             counts layers shared between images more than once, so the saving is an upper bound."
+                    .into();
+                f.how_to_fix = "Add a lifecycle policy (ECR console → the repository → Lifecycle policy), e.g. expire \
+                                untagged images after 14 days and keep the last 20 tagged ones."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // "Never expire" keeps every log event forever.
+            T::LogGroup
+                if !r.attrs.contains_key("retention_days")
+                    && num_attr(r, "stored_gib").is_some_and(|g| g >= LOGS_MIN_GIB) =>
+            {
+                let gib = num_attr(r, "stored_gib").unwrap_or(0.0);
+                let (savings, basis) = input.savings(r, gib * builtin::LOGS_GB);
+                let mut f = base("logs-no-retention", r).evidence("stored_gib", gib);
+                f.title = format!("Log group {} never expires", r.display_name());
+                f.summary = "Without a retention period, every log event is stored forever and the bill grows each \
+                             month. The saving shown is the whole storage cost, the most a retention period could save."
+                    .into();
+                f.how_to_fix = "Set a retention period (CloudWatch console → Log groups → the group → Actions → Edit \
+                                retention), e.g. 30 days, or what your audit rules require. Export older logs to S3 first \
+                                if you must keep them."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // No mount target: nothing can reach the data.
+            T::EfsFileSystem
+                if num_attr(r, "mount_targets") == Some(0.0) && str_attr(r, "state") == Some("available") =>
+            {
+                let (savings, basis) = input.savings(r, platform_monthly(r).unwrap_or(0.0));
+                let mut f = base("efs-no-mount-targets", r).evidence("size_gib", num_attr(r, "size_gib"));
+                f.title = format!("EFS file system {} has no mount targets", r.display_name());
+                f.summary = "Without a mount target no instance, container or function can use it, but its storage \
+                             is still billed."
+                    .into();
+                f.how_to_fix = "If the data is no longer needed, back it up with AWS Backup if in doubt, then delete the \
+                                file system in the EFS console."
+                    .into();
+                out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
+            }
+            // Only the NS and SOA records every zone starts with.
+            T::Route53HostedZone
+                if num_attr(r, "record_sets").is_some_and(|n| n <= 2.0)
+                    && str_attr(r, "linked_service").is_none() =>
+            {
+                let (savings, basis) = input.savings(r, builtin::ROUTE53_ZONE);
+                let mut f = base("route53-zone-empty", r).evidence("record_sets", num_attr(r, "record_sets"));
+                f.title = format!("Hosted zone {} has no records", r.display_name());
+                f.summary = "It holds only the NS and SOA records every zone starts with, but is billed monthly.".into();
+                f.how_to_fix = "If the domain isn't delegated to this zone or no longer used, delete the zone in the \
+                                Route 53 console."
                     .into();
                 out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
             }
@@ -647,6 +777,63 @@ mod tests {
         assert_eq!(
             (f.monthly_savings, f.savings_basis),
             (Some(19.5), Some(SavingsBasis::Actual))
+        );
+    }
+
+    #[test]
+    fn platform_waste_rules() {
+        // today is 2026-10-14; 90+ days ago is before 2026-07-16.
+        let r = |t: T, name: &str, attrs: serde_json::Value| {
+            let mut r = Resource::new(t, format!("arn:{name}"), A, R, name);
+            for (k, v) in attrs.as_object().unwrap() {
+                r.attrs.insert(k.clone(), v.clone());
+            }
+            r
+        };
+        let old = "2026-01-10T00:00:00Z";
+        let recent = "2026-10-01T00:00:00Z";
+        let resources = vec![
+            r(T::SecretsManagerSecret, "s-old", json!({"last_accessed": old, "created": old})),
+            r(T::SecretsManagerSecret, "s-never", json!({"created": old})),
+            r(T::SecretsManagerSecret, "s-used", json!({"last_accessed": recent, "created": old})),
+            r(T::SecretsManagerSecret, "s-rds", json!({"created": old, "owning_service": "rds"})),
+            r(T::SecretsManagerSecret, "s-deleting", json!({"created": old, "deleted": recent})),
+            r(T::KmsKey, "k-off", json!({"state": "Disabled"})),
+            r(T::KmsKey, "k-on", json!({"state": "Enabled"})),
+            r(T::EcrRepository, "e-idle", json!({"size_gib": 4.0, "last_pulled": old, "last_pushed": old,
+                                               "lifecycle_policy": false, "untagged_size_gib": 2.0})),
+            r(T::EcrRepository, "e-messy", json!({"size_gib": 4.0, "last_pulled": recent, "last_pushed": recent,
+                                                "lifecycle_policy": false, "untagged_size_gib": 2.0, "untagged_images": 9})),
+            r(T::EcrRepository, "e-tidy", json!({"size_gib": 4.0, "last_pulled": recent, "lifecycle_policy": true,
+                                               "untagged_size_gib": 2.0})),
+            r(T::LogGroup, "l-forever", json!({"stored_gib": 50.0})),
+            r(T::LogGroup, "l-small", json!({"stored_gib": 0.2})),
+            r(T::LogGroup, "l-30d", json!({"stored_gib": 50.0, "retention_days": 30})),
+            r(T::EfsFileSystem, "f-orphan", json!({"state": "available", "mount_targets": 0,
+                                                  "standard_gib": 100.0, "ia_gib": 100.0, "size_gib": 200.0})),
+            r(T::EfsFileSystem, "f-used", json!({"state": "available", "mount_targets": 2, "standard_gib": 10.0})),
+            r(T::Route53HostedZone, "z-empty", json!({"record_sets": 2})),
+            r(T::Route53HostedZone, "z-used", json!({"record_sets": 14})),
+        ];
+        let findings = run(&resources, &[], &HashMap::new(), None);
+        let got: Vec<(&str, String, Option<f64>)> = findings
+            .iter()
+            .map(|f| (f.rule, f.resources[0].label.clone(), f.monthly_savings))
+            .collect();
+        let want = [
+            ("secret-unused", "s-old", Some(0.4)),
+            ("secret-unused", "s-never", Some(0.4)),
+            ("kms-key-disabled", "k-off", Some(1.0)),
+            // Idle wins over untagged images: the whole repository goes.
+            ("ecr-repository-idle", "e-idle", Some(0.4)),
+            ("ecr-untagged-images", "e-messy", Some(0.2)),
+            ("logs-no-retention", "l-forever", Some(1.5)),
+            ("efs-no-mount-targets", "f-orphan", Some(31.6)),
+            ("route53-zone-empty", "z-empty", Some(0.5)),
+        ];
+        assert_eq!(
+            got,
+            want.map(|(rule, label, s)| (rule, label.to_owned(), s))
         );
     }
 }
