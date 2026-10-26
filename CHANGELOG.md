@@ -28,6 +28,11 @@ First feature-complete version (MVP, milestones M0–M6).
   graph, bundle list prices, and waste findings (unattached static IPs and disks, stopped
   instances). The IAM policies gain the matching `lightsail:Get*` actions.
 - **Graph**: Flow and Network layouts, untagged-resource filter, minimap.
+- **More services**: Secrets Manager secrets, KMS customer-managed keys, ECR repositories,
+  CloudWatch log groups, EFS file systems and Route 53 hosted zones, with public monthly prices
+  and waste rules: unread secrets, disabled keys, idle repositories and untagged images without a
+  lifecycle policy, log groups that never expire, file systems without mount targets, empty
+  hosted zones. Only metadata is read (never secret values, key material, images or log events).
 - **Infrastructure as code**: which tool made each resource (CloudFormation, CDK, SAM, Serverless,
   Beanstalk, Copilot, Amplify, Terraform, Pulumi) from stacks, tags and generated names, with
   confidence and evidence; "Managed by" graph filter, coverage card in Findings, assistant tool. The

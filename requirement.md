@@ -64,7 +64,7 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
 
 ### 4.3 Inventory & service dependency map
 
-- **FR-20** Discover resources across all enabled regions per account (EC2, EBS, ELB/ALB/NLB, RDS, Lambda, S3, DynamoDB, ECS/EKS, NAT Gateway, VPC/subnets, CloudFront, API Gateway, SQS/SNS, ElastiCache, Lightsail — extendable via a provider/plugin model).
+- **FR-20** Discover resources across all enabled regions per account (EC2, EBS, ELB/ALB/NLB, RDS, Lambda, S3, DynamoDB, ECS/EKS, NAT Gateway, VPC/subnets, CloudFront, API Gateway, SQS/SNS, ElastiCache, Lightsail, Secrets Manager, KMS, ECR, CloudWatch log groups, EFS, Route 53 hosted zones — extendable via a provider/plugin model).
 - **FR-21** Use AWS Config relationships and Resource Explorer when enabled; fall back to service `Describe*/List*` APIs.
 - **FR-22** Infer relationships, e.g.: VPC → subnet → instance; LB → target group → instance/ECS service; Lambda → event source (SQS, DynamoDB stream, API Gateway); resource → security group; EBS → instance; ENI → owner.
 - **FR-23** Interactive graph view: zoom, filter by account/region/VPC/tag/service (including resources *missing* a tag), search, click a node for details. Two layouts of the same graph: **Flow** (layered by role: entry points → compute → data, with a minimap) and **Network** (force-directed; isolated resources hidden behind a "show them" action; labels hidden when zoomed out).
@@ -84,6 +84,10 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
   - Low-utilization EC2/RDS (CloudWatch metrics — opt-in, as metric API calls cost money)
   - S3 buckets without lifecycle policies; old-generation instance types
   - Untagged resources (tag coverage %)
+  - Lightsail: unattached static IPs and disks, stopped instances
+  - Secrets not read in 90+ days; disabled KMS keys (still billed)
+  - ECR repositories unused for 90+ days, or keeping untagged images without a lifecycle policy
+  - CloudWatch log groups that never expire (1 GiB+); EFS file systems without mount targets; empty Route 53 hosted zones
 - **FR-32** Patterns & trends: top movers, cost growth by service, data transfer breakdown, Savings Plans / RI coverage and utilization.
 - **FR-33** Findings list with severity, estimated savings, affected resources, and a "how to fix" explanation. Findings can be dismissed/snoozed (stored locally).
 - **FR-34** Savings estimates use the customer's actual rates from CUR when available (including discounts, Savings Plans, RIs); otherwise public prices from the AWS Price List API, clearly labeled as "estimate (public price)".
