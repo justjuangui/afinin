@@ -133,28 +133,83 @@ impl LlmSettings {
         self.redact.unwrap_or(!self.is_local())
     }
 
-    /// The price for a model as a provider reports it. Providers may answer
-    /// with a version of the configured ID (`claude-x-20260901`,
-    /// `model-v1:0`, `model@2026…`), so a priced ID followed by a version
-    /// also counts; another model sharing a prefix (`gpt-4` / `gpt-4o`) does
-    /// not. Zero prices count as not set.
+    /// The price for a model as a provider reports it: the one entered in
+    /// Settings, else Anthropic's list price for its own model IDs
+    /// ([`known_price`]). Zero prices count as not set.
     pub fn price(&self, model: &str) -> Option<TokenPrice> {
-        let version_of = |id: &str| {
-            model.strip_prefix(id).is_some_and(|rest| {
-                rest.is_empty()
-                    || rest.starts_with([':', '@'])
-                    || rest.starts_with("-v")
-                    || rest
-                        .strip_prefix('-')
-                        .is_some_and(|d| d.len() >= 6 && d.chars().take(6).all(|c| c.is_ascii_digit()))
-            })
-        };
-        self.prices
-            .iter()
-            .filter(|(id, p)| version_of(id) && (p.input > 0.0 || p.output > 0.0))
-            .max_by_key(|(id, _)| id.len())
-            .map(|(_, p)| *p)
+        best_match(
+            model,
+            self.prices
+                .iter()
+                .filter(|(_, p)| p.input > 0.0 || p.output > 0.0)
+                .map(|(id, p)| (id.as_str(), *p)),
+        )
+        .or_else(|| known_price(model))
     }
+}
+
+/// When [`KNOWN_PRICES`] was last checked against Anthropic's pricing page.
+pub const KNOWN_PRICES_AS_OF: &str = "October 2026";
+
+/// Anthropic API list prices (USD per million tokens) for its own model IDs.
+/// Cache reads are 0.1 × input unless the model prices them differently;
+/// cache writes are 1.25 × input (5-minute cache, which the assistant uses).
+/// Bedrock (`anthropic.claude-…`) and other resellers price on their own, so
+/// their IDs never match here.
+const KNOWN_PRICES: &[(&str, f64, f64, Option<f64>)] = &[
+    ("claude-fable-5-1", 10.0, 50.0, Some(0.25)),
+    ("claude-fable-5", 10.0, 50.0, None),
+    ("claude-opus-5-5", 4.0, 20.0, Some(0.20)),
+    ("claude-opus-5", 5.0, 25.0, None),
+    ("claude-opus-4-8", 5.0, 25.0, None),
+    ("claude-opus-4-7", 5.0, 25.0, None),
+    ("claude-opus-4-6", 5.0, 25.0, None),
+    ("claude-sonnet-5-5", 2.0, 10.0, Some(0.20)),
+    ("claude-sonnet-5", 2.0, 10.0, None),
+    ("claude-sonnet-4-6", 3.0, 15.0, None),
+    // Prompts up to 100K tokens; longer ones cost 5 ×.
+    ("claude-haiku-5-5", 0.10, 0.50, None),
+    ("claude-haiku-4-5", 1.0, 5.0, None),
+];
+
+/// Anthropic's list price for one of its model IDs (or a dated version of it).
+pub fn known_price(model: &str) -> Option<TokenPrice> {
+    best_match(
+        model,
+        KNOWN_PRICES.iter().map(|&(id, input, output, cache_read)| {
+            (
+                id,
+                TokenPrice {
+                    input,
+                    output,
+                    cache_read,
+                    cache_write: None,
+                },
+            )
+        }),
+    )
+}
+
+/// The price whose ID is `model` or a version of it. Providers may answer
+/// with a version of the configured ID (`claude-x-20260901`, `model-v1:0`,
+/// `model@2026…`), so a priced ID followed by a version also counts; another
+/// model sharing a prefix (`gpt-4` / `gpt-4o`, `claude-opus-5` /
+/// `claude-opus-5-5`) does not.
+fn best_match<'a>(model: &str, prices: impl Iterator<Item = (&'a str, TokenPrice)>) -> Option<TokenPrice> {
+    let version_of = |id: &str| {
+        model.strip_prefix(id).is_some_and(|rest| {
+            rest.is_empty()
+                || rest.starts_with([':', '@'])
+                || rest.starts_with("-v")
+                || rest
+                    .strip_prefix('-')
+                    .is_some_and(|d| d.len() >= 6 && d.chars().take(6).all(|c| c.is_ascii_digit()))
+        })
+    };
+    prices
+        .filter(|(id, _)| version_of(id))
+        .max_by_key(|(id, _)| id.len())
+        .map(|(_, p)| p)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -280,6 +335,14 @@ mod tests {
         assert_eq!(cfg.price("claude-x-5"), None);
         assert_eq!(cfg.price("unpriced"), None);
         assert_eq!(cfg.price("other"), None);
+        // Anthropic's own IDs have a list price unless one is entered;
+        // Bedrock IDs and prefixes of other models don't.
+        assert_eq!(cfg.price("claude-opus-5-5").map(|p| p.input), Some(4.0));
+        assert_eq!(cfg.price("claude-opus-5-20260101").map(|p| p.input), Some(5.0));
+        assert_eq!(cfg.price("claude-opus-5-5").and_then(|p| p.cache_read), Some(0.20));
+        assert_eq!(cfg.price("anthropic.claude-opus-5-5"), None);
+        cfg.prices.insert("claude-opus-5-5".into(), price);
+        assert_eq!(cfg.price("claude-opus-5-5"), Some(price));
         // 1M uncached in, 1M out, 1M cache reads (0.5), 1M cache writes (6.25).
         let cost = price.cost(1_000_000, 1_000_000, 1_000_000, 1_000_000);
         assert!((cost - 36.75).abs() < 1e-9, "{cost}");

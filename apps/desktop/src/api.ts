@@ -44,6 +44,7 @@ import type {
   Turn,
   Workspace,
   WorkspaceContext,
+  TokenPrice,
 } from "./types";
 
 export const api = {
@@ -74,6 +75,7 @@ export const api = {
   syncWorkspace: (workspaceId: string) => invoke<void>("sync_workspace", { workspaceId }),
   apiUsage: () => invoke<ApiUsage[]>("api_usage"),
   llmUsage: () => invoke<LlmUsage[]>("llm_usage"),
+  knownLlmPrice: (model: string) => invoke<[TokenPrice, string] | null>("known_llm_price", { model }),
   /** Fires with an account id whenever its sync starts or ends. */
   onSyncChanged: (cb: (accountId: string) => void): Promise<UnlistenFn> =>
     listen<string>("sync-changed", (e) => cb(e.payload)),

@@ -23,7 +23,8 @@ First feature-complete version (MVP, milestones M0–M6).
   answers that guide similar questions and can be re-checked with expected values,
   missing-data reports with fixes, unverified-figure warnings; per-answer traces (rounds, tool
   calls, tokens, cache, latency) with waste warnings, Anthropic prompt caching, de-duplicated
-  tool calls, per-model prices, cost estimates and a monthly budget.
+  tool calls, per-model prices (Anthropic list prices built in), cost estimates and a monthly
+  budget.
 - **Lightsail**: instances, databases, load balancers, disks and static IPs in the inventory and
   graph, bundle list prices, and waste findings (unattached static IPs and disks, stopped
   instances). The IAM policies gain the matching `lightsail:Get*` actions.

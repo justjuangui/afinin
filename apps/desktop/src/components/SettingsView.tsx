@@ -570,7 +570,20 @@ function PriceFields({
   price: TokenPrice | undefined;
   onChange: (model: string, price: TokenPrice | null) => void;
 }) {
-  const current: TokenPrice = price ?? { input: 0, output: 0, cache_read: null, cache_write: null };
+  // Anthropic's list price for its own model IDs, used until one is entered.
+  const [known, setKnown] = useState<{ model: string; price: TokenPrice; asOf: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .knownLlmPrice(model)
+      .then((k) => live && setKnown(k ? { model, price: k[0], asOf: k[1] } : null))
+      .catch(() => live && setKnown(null));
+    return () => {
+      live = false;
+    };
+  }, [model]);
+  const list = known?.model === model ? known : null;
+  const current: TokenPrice = price ?? list?.price ?? { input: 0, output: 0, cache_read: null, cache_write: null };
   const set = (patch: Partial<TokenPrice>) => {
     const next = { ...current, ...patch };
     const empty = !next.input && !next.output && next.cache_read == null && next.cache_write == null;
@@ -603,8 +616,19 @@ function PriceFields({
         {field("Cache write", current.cache_write, current.input ? String(+(current.input * 1.25).toFixed(4)) : "1.25 × input", (v) => ({ cache_write: v }))}
       </div>
       <span className="hint">
-        From your provider&apos;s pricing page; used only for the cost estimates in traces, usage and the budget. Leave empty
-        for local models.
+        {list && !price ? (
+          <>Anthropic&apos;s list price as of {list.asOf}; edit it if you pay a different rate. </>
+        ) : list ? (
+          <>
+            Your price; Anthropic lists {usd(list.price.input)} / {usd(list.price.output)}.{" "}
+            <button type="button" className="link" onClick={() => onChange(model, null)}>
+              Use the list price
+            </button>{" "}
+          </>
+        ) : (
+          <>From your provider&apos;s pricing page. Leave empty for local models. </>
+        )}
+        Used only for the cost estimates in traces, usage and the budget.
       </span>
     </fieldset>
   );
