@@ -16,7 +16,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api, errorMessage } from "../api";
-import { money, relativeTime } from "../format";
+import { money, relativeTime, usd } from "../format";
 import { NODE_H, NODE_W, layout } from "../graphLayout";
 import type {
   Application,
@@ -185,7 +185,7 @@ const ResourceNode = memo(function ResourceNode({ data, selected }: NodeProps<No
                 : "Last 30 days"
           }
         >
-          {money(node.cost, unit, true)}
+          {cardMoney(node.cost, unit)}
           {node.cost_basis === "list_price" && "/mo"}
         </span>
       )}
@@ -798,7 +798,7 @@ function Details({
             </dd>
           </>
         )}
-        <CostRows node={node} unit={graph.unit} />
+        <CostRows node={node} unit={graph.unit} curActive={graph.cost_basis === "resource"} />
       </dl>
 
       {links.length > 0 && (
@@ -978,7 +978,21 @@ function listPriceNote(node: GraphNode): string {
  * The resource's cost, and its service's total when that total is shared:
  * without CUR, AWS reports cost per service, not per resource.
  */
-function CostRows({ node, unit }: { node: GraphNode; unit: string }) {
+/** Why a resource shows no CUR cost although CUR is connected. */
+function noCurLine(node: GraphNode): string {
+  const created = typeof node.attrs.created === "string" ? node.attrs.created : null;
+  const recent = created !== null && Date.now() - new Date(created).getTime() < 3 * 86_400_000;
+  return recent
+    ? `CUR has no cost for it yet: it was created ${relativeTime(created)}, and CUR data arrives a day or more late.`
+    : "CUR has no cost line for it in the last 30 days: too small to bill yet, or billed without a resource ID.";
+}
+
+/**
+ * The resource's cost, and its service's total when that total is shared.
+ * With CUR connected, a resource without a CUR line says why instead of
+ * asking to set CUR up.
+ */
+function CostRows({ node, unit, curActive }: { node: GraphNode; unit: string; curActive: boolean }) {
   const shared = node.service_cost !== null && node.cost_basis !== "service" && node.cost_basis !== "resource";
   return (
     <>
@@ -986,9 +1000,13 @@ function CostRows({ node, unit }: { node: GraphNode; unit: string }) {
         <>
           <dt>Public price</dt>
           <dd>
-            {node.cost === 0 ? "Included" : money(node.cost, "USD")}{" "}
-            <span className="muted small">{node.cost === 0 ? "while attached to an instance" : "per month"}</span>
-            <div className="muted small">{listPriceNote(node)} Actual cost needs CUR.</div>
+            {node.cost === 0 && node.resource_type.startsWith("lightsail:") ? "Included" : usd(node.cost)}{" "}
+            <span className="muted small">
+              {node.cost === 0 && node.resource_type.startsWith("lightsail:") ? "while attached to an instance" : "per month"}
+            </span>
+            <div className="muted small">
+              {listPriceNote(node)} {curActive ? noCurLine(node) : "Actual cost needs CUR."}
+            </div>
           </dd>
         </>
       )}
@@ -1011,8 +1029,8 @@ function CostRows({ node, unit }: { node: GraphNode; unit: string }) {
           <dd>
             {money(node.service_cost ?? 0, unit)} <span className="muted small">last 30 days, this account</span>
             <div className="muted small">
-              Shared by every resource of this service, so it isn’t shown as this one’s cost. Per-resource cost needs
-              CUR.
+              Shared by every resource of this service, so it isn’t shown as this one’s cost.{" "}
+              {curActive ? noCurLine(node) : "Per-resource cost needs CUR."}
             </div>
           </dd>
         </>
@@ -1020,9 +1038,16 @@ function CostRows({ node, unit }: { node: GraphNode; unit: string }) {
       {node.cost === null && !shared && node.resource_type.startsWith("lightsail:") && (
         <>
           <dt>Cost</dt>
-          <dd className="muted small">No list price for this Lightsail resource. Per-resource cost needs CUR.</dd>
+          <dd className="muted small">
+            No list price for this Lightsail resource. {curActive ? noCurLine(node) : "Per-resource cost needs CUR."}
+          </dd>
         </>
       )}
     </>
   );
+}
+
+/** Node cards round to whole units; tiny non-zero amounts say so instead of “0”. */
+function cardMoney(cost: number, unit: string): string {
+  return cost > 0 && cost < 0.01 ? `< ${money(0.01, unit)}` : money(cost, unit, true);
 }
