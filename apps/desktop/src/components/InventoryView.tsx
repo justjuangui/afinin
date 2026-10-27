@@ -965,7 +965,9 @@ function listPriceNote(node: GraphNode): string {
   if (node.resource_type === "logs:log-group")
     return "Storage only; ingesting logs ($0.50/GB) is usually the bigger charge and comes on top.";
   if (node.resource_type === "ecr:repository")
-    return "Image sizes count shared layers once per image, so this is an upper bound.";
+    return `Active images only${
+      typeof node.attrs.archived_size_gib === "number" ? " (archived images are billed at the archive rate)" : ""
+    }; shared layers are counted once per image, so this is an upper bound.`;
   if (node.resource_type === "secretsmanager:secret") return "Per secret; API calls ($0.05 per 10,000) come on top.";
   if (node.resource_type === "kms:key") return "Per customer-managed key, enabled or disabled; requests come on top.";
   if (node.resource_type === "elasticfilesystem:file-system")

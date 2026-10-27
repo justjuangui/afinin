@@ -147,13 +147,31 @@ pub async fn ecr(ctx: &Ctx<'_>) -> Result<Collected> {
             match client
                 .describe_images()
                 .repository_name(name)
+                // Archived images too: by default only active ones are listed.
+                .filter(
+                    aws_sdk_ecr::types::DescribeImagesFilter::builder()
+                        .image_status(aws_sdk_ecr::types::ImageStatusFilter::Any)
+                        .build(),
+                )
                 .into_paginator()
                 .send()
                 .try_collect()
                 .await
             {
                 Ok(pages) => {
-                    let images: Vec<_> = pages.iter().flat_map(|p| p.image_details()).collect();
+                    let all: Vec<_> = pages.iter().flat_map(|p| p.image_details()).collect();
+                    // Archived images are billed at the archive rate; the price
+                    // and rules below cover active storage only.
+                    let archived = |i: &aws_sdk_ecr::types::ImageDetail| {
+                        i.image_status() == Some(&aws_sdk_ecr::types::ImageStatus::Archived)
+                    };
+                    let archived_bytes: i64 = all
+                        .iter()
+                        .filter(|i| archived(i))
+                        .filter_map(|i| i.image_size_in_bytes())
+                        .sum();
+                    let archived_count = all.iter().filter(|i| archived(i)).count();
+                    let images: Vec<_> = all.iter().copied().filter(|i| !archived(i)).collect();
                     // Untagged and not attached to another image (signatures,
                     // SBOMs): candidates for a lifecycle policy. The
                     // per-architecture images of a multi-arch image are
@@ -185,6 +203,8 @@ pub async fn ecr(ctx: &Ctx<'_>) -> Result<Collected> {
                         .attr("multi_arch", Some(Value::Bool(multi_arch)))
                         .attr("size_gib", gib(size(false)))
                         .attr("untagged_size_gib", gib(size(true)))
+                        .attr("archived_images", (archived_count > 0).then(|| json!(archived_count)))
+                        .attr("archived_size_gib", (archived_count > 0).then(|| gib(archived_bytes)).flatten())
                         .attr("last_pushed", time(latest(|i| i.image_pushed_at())))
                         .attr("last_pulled", time(latest(|i| i.last_recorded_pull_time())));
                 }
