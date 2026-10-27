@@ -283,7 +283,8 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                     && num_attr(r, "untagged_size_gib").is_some_and(|g| g >= 0.5) =>
             {
                 let gib = num_attr(r, "untagged_size_gib").unwrap_or(0.0);
-                let (savings, basis) = input.savings(r, gib * builtin::ECR_GB);
+                // Only the untagged part goes: never the repository's whole CUR cost.
+                let (savings, basis) = (gib * builtin::ECR_GB, SavingsBasis::PublicPrice);
                 let mut f = base("ecr-untagged-images", r)
                     .evidence("untagged_images", num_attr(r, "untagged_images"))
                     .evidence("untagged_size_gib", gib);
@@ -302,7 +303,9 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                     && num_attr(r, "stored_gib").is_some_and(|g| g >= LOGS_MIN_GIB) =>
             {
                 let gib = num_attr(r, "stored_gib").unwrap_or(0.0);
-                let (savings, basis) = input.savings(r, gib * builtin::LOGS_GB);
+                // Storage only: the group's CUR cost includes ingestion, which
+                // a retention period doesn't reduce.
+                let (savings, basis) = (gib * builtin::LOGS_GB, SavingsBasis::PublicPrice);
                 let mut f = base("logs-no-retention", r).evidence("stored_gib", gib);
                 f.title = format!("Log group {} never expires", r.display_name());
                 f.summary = "Without a retention period, every log event is stored forever and the bill grows each \
@@ -835,6 +838,26 @@ mod tests {
             got,
             want.map(|(rule, label, s)| (rule, label.to_owned(), s))
         );
+        // With CUR, partial savings stay scoped: untagged images and log
+        // storage, not the resource's whole actual cost.
+        let actual = HashMap::from([
+            ("arn:e-messy".to_owned(), 10.10),
+            ("arn:l-forever".to_owned(), 500.0),
+        ]);
+        let with_cur = run(&resources, &[], &actual, None);
+        let saving = |rule: &str| with_cur.iter().find(|f| f.rule == rule).and_then(|f| f.monthly_savings);
+        assert_eq!(saving("ecr-untagged-images"), Some(0.2));
+        assert_eq!(saving("logs-no-retention"), Some(1.5));
+
+        // EFS: provisioned throughput is billed above the included baseline
+        // (2 TiB of Standard storage includes 100 MiB/s).
+        let efs = |mibps: f64| {
+            platform_monthly(&r(T::EfsFileSystem, "f", json!({"standard_gib": 2048.0,
+                "throughput_mode": "provisioned", "provisioned_mibps": mibps}))).unwrap()
+        };
+        assert!((efs(100.0) - 2048.0 * 0.30).abs() < 1e-9);
+        assert!((efs(150.0) - (2048.0 * 0.30 + 50.0 * 6.0)).abs() < 1e-9);
+
         // A repository whose images couldn't be listed has no price, not $0.
         assert_eq!(platform_monthly(&r(T::EcrRepository, "e-unknown", json!({}))), None);
         assert_eq!(platform_monthly(&r(T::EcrRepository, "e-empty", json!({"size_gib": 0.0}))), Some(0.0));
