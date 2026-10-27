@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { navLinks } from "../assistantNav";
-import { duration, relativeTime, tokens, usd } from "../format";
+import { duration, LOCALE, relativeTime, tokens, usd } from "../format";
 import type {
   AssistantProgress,
   Citation,
@@ -580,7 +580,7 @@ function LlmLogDialog({ workspaceId, onClose }: { workspaceId: string; onClose: 
         {entries?.map((e) => (
           <li key={e.id}>
             <button className="ghost log-head" onClick={() => setOpen(open === e.id ? null : e.id)} aria-expanded={open === e.id}>
-              <span>{new Date(e.created_at).toLocaleString()}</span>
+              <span>{new Date(e.created_at).toLocaleString(LOCALE)}</span>
               <span>
                 {e.provider} · {e.model}
               </span>
