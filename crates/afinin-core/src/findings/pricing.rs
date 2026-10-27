@@ -51,8 +51,10 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
         // Secrets scheduled for deletion and keys pending deletion aren't billed.
         T::SecretsManagerSecret if text("deleted").is_none() => Some(builtin::SECRET),
         T::KmsKey if matches!(text("state"), Some("Enabled" | "Disabled")) => Some(builtin::KMS_KEY),
-        T::EcrRepository => Some(num("size_gib") * builtin::ECR_GB),
-        T::LogGroup => Some(num("stored_gib") * builtin::LOGS_GB),
+        // No size when its listing failed (e.g. ecr:DescribeImages denied):
+        // no price either, rather than a confident $0.
+        T::EcrRepository => Some(r.attrs.get("size_gib")?.as_f64()? * builtin::ECR_GB),
+        T::LogGroup => Some(r.attrs.get("stored_gib")?.as_f64()? * builtin::LOGS_GB),
         T::EfsFileSystem => {
             let one_zone = r.attrs.get("one_zone").and_then(|v| v.as_bool()) == Some(true);
             let (standard, ia) = if one_zone {
