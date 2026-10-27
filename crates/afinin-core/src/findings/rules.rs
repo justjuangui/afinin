@@ -835,5 +835,8 @@ mod tests {
             got,
             want.map(|(rule, label, s)| (rule, label.to_owned(), s))
         );
+        // A repository whose images couldn't be listed has no price, not $0.
+        assert_eq!(platform_monthly(&r(T::EcrRepository, "e-unknown", json!({}))), None);
+        assert_eq!(platform_monthly(&r(T::EcrRepository, "e-empty", json!({"size_gib": 0.0}))), Some(0.0));
     }
 }
