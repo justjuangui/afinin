@@ -154,10 +154,23 @@ pub async fn ecr(ctx: &Ctx<'_>) -> Result<Collected> {
             {
                 Ok(pages) => {
                     let images: Vec<_> = pages.iter().flat_map(|p| p.image_details()).collect();
-                    let size = |only_untagged: bool| -> i64 {
+                    // Untagged and not attached to another image (signatures,
+                    // SBOMs): candidates for a lifecycle policy. The
+                    // per-architecture images of a multi-arch image are
+                    // untagged too but in use; `multi_arch` flags repositories
+                    // where that can't be told apart.
+                    let loose = |i: &aws_sdk_ecr::types::ImageDetail| {
+                        i.image_tags().is_empty() && i.subject_manifest_digest().is_none()
+                    };
+                    let multi_arch = images.iter().any(|i| {
+                        i.image_manifest_media_type().is_some_and(|m| {
+                            m.contains("manifest.list") || m.contains("image.index")
+                        })
+                    });
+                    let size = |only_loose: bool| -> i64 {
                         images
                             .iter()
-                            .filter(|i| !only_untagged || i.image_tags().is_empty())
+                            .filter(|i| !only_loose || loose(i))
                             .filter_map(|i| i.image_size_in_bytes())
                             .sum()
                     };
@@ -167,8 +180,9 @@ pub async fn ecr(ctx: &Ctx<'_>) -> Result<Collected> {
                     r.attr("image_count", Some(json!(images.len())))
                         .attr(
                             "untagged_images",
-                            Some(json!(images.iter().filter(|i| i.image_tags().is_empty()).count())),
+                            Some(json!(images.iter().filter(|i| loose(i)).count())),
                         )
+                        .attr("multi_arch", Some(Value::Bool(multi_arch)))
                         .attr("size_gib", gib(size(false)))
                         .attr("untagged_size_gib", gib(size(true)))
                         .attr("last_pushed", time(latest(|i| i.image_pushed_at())))
@@ -295,6 +309,15 @@ pub async fn efs(ctx: &Ctx<'_>) -> Result<Collected> {
                     fs.provisioned_throughput_in_mibps().map(|v| json!(v)),
                 )
                 .attr("one_zone", Some(Value::Bool(fs.availability_zone_name().is_some())))
+                // The destination of an EFS replication: no mount targets by design.
+                .attr(
+                    "replication_destination",
+                    Some(Value::Bool(
+                        fs.file_system_protection()
+                            .and_then(|p| p.replication_overwrite_protection())
+                            == Some(&aws_sdk_efs::types::ReplicationOverwriteProtection::Replicating),
+                    )),
+                )
                 .attr("created", time(Some(fs.creation_time())));
             out.resources.push(r);
         }

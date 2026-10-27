@@ -1047,7 +1047,8 @@ function CostRows({ node, unit, curActive }: { node: GraphNode; unit: string; cu
   );
 }
 
-/** Node cards round to whole units; tiny non-zero amounts say so instead of “0”. */
+/** Node cards are compact: whole units from $1, cents below, and "< $0.01" for less. */
 function cardMoney(cost: number, unit: string): string {
-  return cost > 0 && cost < 0.01 ? `< ${money(0.01, unit)}` : money(cost, unit, true);
+  if (cost > 0 && cost < 0.01) return `< ${money(0.01, unit)}`;
+  return cost < 1 ? money(cost, unit) : money(cost, unit, true);
 }

@@ -280,6 +280,7 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
             // Untagged images pile up without a lifecycle policy.
             T::EcrRepository
                 if r.attrs.get("lifecycle_policy").and_then(|v| v.as_bool()) == Some(false)
+                    && r.attrs.get("multi_arch").and_then(|v| v.as_bool()) != Some(true)
                     && num_attr(r, "untagged_size_gib").is_some_and(|g| g >= 0.5) =>
             {
                 let gib = num_attr(r, "untagged_size_gib").unwrap_or(0.0);
@@ -319,7 +320,9 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
             }
             // No mount target: nothing can reach the data.
             T::EfsFileSystem
-                if num_attr(r, "mount_targets") == Some(0.0) && str_attr(r, "state") == Some("available") =>
+                if num_attr(r, "mount_targets") == Some(0.0)
+                    && str_attr(r, "state") == Some("available")
+                    && r.attrs.get("replication_destination").and_then(|v| v.as_bool()) != Some(true) =>
             {
                 let (savings, basis) = input.savings(r, platform_monthly(r).unwrap_or(0.0));
                 let mut f = base("efs-no-mount-targets", r).evidence("size_gib", num_attr(r, "size_gib"));
@@ -815,6 +818,12 @@ mod tests {
             r(T::EfsFileSystem, "f-orphan", json!({"state": "available", "mount_targets": 0,
                                                   "standard_gib": 100.0, "ia_gib": 100.0, "size_gib": 200.0})),
             r(T::EfsFileSystem, "f-used", json!({"state": "available", "mount_targets": 2, "standard_gib": 10.0})),
+            // A disaster-recovery replica has no mount targets by design.
+            r(T::EfsFileSystem, "f-replica", json!({"state": "available", "mount_targets": 0,
+                                                   "standard_gib": 100.0, "replication_destination": true})),
+            // Multi-arch images: untagged children are in use.
+            r(T::EcrRepository, "e-multiarch", json!({"size_gib": 4.0, "last_pulled": recent, "last_pushed": recent,
+                                                    "lifecycle_policy": false, "untagged_size_gib": 2.0, "multi_arch": true})),
             r(T::Route53HostedZone, "z-empty", json!({"record_sets": 2})),
             r(T::Route53HostedZone, "z-used", json!({"record_sets": 14})),
         ];
