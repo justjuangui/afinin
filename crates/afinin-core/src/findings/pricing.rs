@@ -34,8 +34,11 @@ pub mod builtin {
     pub const EFS_IA_GB: f64 = 0.016;
     pub const EFS_ONE_ZONE_IA_GB: f64 = 0.0133;
     pub const EFS_ARCHIVE_GB: f64 = 0.008;
-    /// Per MiB/s of provisioned EFS throughput.
+    /// Per MiB/s of provisioned EFS throughput above the baseline that
+    /// Standard storage includes.
     pub const EFS_PROVISIONED_MIBPS: f64 = 6.00;
+    /// Throughput included per GiB of Standard storage (50 MiB/s per TiB).
+    pub const EFS_BASELINE_MIBPS_PER_GIB: f64 = 50.0 / 1024.0;
     /// Per hosted zone (the first 25 of an account).
     pub const ROUTE53_ZONE: f64 = 0.50;
 }
@@ -62,8 +65,10 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
             } else {
                 (builtin::EFS_STANDARD_GB, builtin::EFS_IA_GB)
             };
+            // Only throughput above what the stored data includes is billed.
             let throughput = if text("throughput_mode") == Some("provisioned") {
-                num("provisioned_mibps") * builtin::EFS_PROVISIONED_MIBPS
+                let included = num("standard_gib") * builtin::EFS_BASELINE_MIBPS_PER_GIB;
+                (num("provisioned_mibps") - included).max(0.0) * builtin::EFS_PROVISIONED_MIBPS
             } else {
                 0.0
             };
