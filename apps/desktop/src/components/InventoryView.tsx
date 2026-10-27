@@ -16,7 +16,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api, errorMessage } from "../api";
-import { money, relativeTime, usd } from "../format";
+import { LOCALE, money, relativeTime, usd } from "../format";
 import { NODE_H, NODE_W, layout } from "../graphLayout";
 import type {
   Application,
@@ -590,7 +590,7 @@ function Inventory({ workspaceId, dataVersion, costTagKeys, onSync, syncing, onE
       <p className="muted small scan-line">
         {graph && (
           <>
-            Showing {graph.nodes.length.toLocaleString()} of {graph.total_resources.toLocaleString()} resources ·{" "}
+            Showing {graph.nodes.length.toLocaleString(LOCALE)} of {graph.total_resources.toLocaleString(LOCALE)} resources ·{" "}
           </>
         )}
         {(() => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { money, usd } from "../format";
+import { LOCALE, money, usd } from "../format";
 import { ConfirmDialog } from "./Modal";
 import type { Account, ApiUsage, CostMetric, LlmSettings, LlmUsage, ProviderKind, Settings, TokenPrice } from "../types";
 import { Callout } from "./Callout";
@@ -518,19 +518,19 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
                       <td>
                         {u.model} <span className="muted small">{u.provider}</span>
                       </td>
-                      <td className="num">{u.requests.toLocaleString()}</td>
+                      <td className="num">{u.requests.toLocaleString(LOCALE)}</td>
                       <td className="num">
-                        {(u.input_tokens + u.cache_read_tokens + u.cache_write_tokens).toLocaleString()}
+                        {(u.input_tokens + u.cache_read_tokens + u.cache_write_tokens).toLocaleString(LOCALE)}
                       </td>
                       <td className="num">{cacheShare(u)}</td>
-                      <td className="num">{u.output_tokens.toLocaleString()}</td>
+                      <td className="num">{u.output_tokens.toLocaleString(LOCALE)}</td>
                       <td className="num">{u.cost_usd != null ? usd(u.cost_usd) : <span className="muted">no price</span>}</td>
                     </tr>
                   ))}
                   {llmUsage.some((u) => u.cost_usd != null) && (
                     <tr className="total">
                       <td>Total</td>
-                      <td className="num">{llmUsage.reduce((s, u) => s + u.requests, 0).toLocaleString()}</td>
+                      <td className="num">{llmUsage.reduce((s, u) => s + u.requests, 0).toLocaleString(LOCALE)}</td>
                       <td />
                       <td />
                       <td />

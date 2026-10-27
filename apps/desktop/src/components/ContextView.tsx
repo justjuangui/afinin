@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { relativeTime } from "../format";
+import { LOCALE, relativeTime } from "../format";
 import type { ContextEntry, ContextRevision, DimensionValue, StoredContext, WorkspaceContext } from "../types";
 import { Modal } from "./Modal";
 import { Callout } from "./Callout";
@@ -424,7 +424,7 @@ function Section({
       <span className="context-title">
         <h3>{section.title}</h3>
         <span className={over ? "error small" : "muted small"}>
-          {value.length.toLocaleString()} / {MAX_SECTION.toLocaleString()}
+          {value.length.toLocaleString(LOCALE)} / {MAX_SECTION.toLocaleString(LOCALE)}
         </span>
       </span>
       <span className="hint">{section.hint}</span>
