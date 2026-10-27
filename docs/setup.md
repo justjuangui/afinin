@@ -55,9 +55,11 @@ your actual rates.
 **Settings → Assistant** connects a local model (Ollama, LM Studio) or a cloud provider
 (Anthropic, Amazon Bedrock, any OpenAI-compatible API). See [privacy.md](privacy.md).
 
-- **Price and budget**: enter the model's price per million tokens (from your provider's
-  pricing page) to see the estimated cost of each answer, of re-checks and of the month. An
-  optional monthly budget stops the assistant once it is reached.
+- **Price and budget**: the model's price per million tokens gives the estimated cost of each
+  answer, of re-checks and of the month. Anthropic models (provider **Anthropic**) come with
+  Anthropic's list price filled in; edit it if you pay a different rate. For Bedrock,
+  OpenAI-compatible and other models, enter it from your provider's pricing page. An optional
+  monthly budget stops the assistant once it is reached.
 - **Workspace context** (the workspace's **Context** tab): say what each account is for, what
   your tags and terms mean and how you want answers. Answers use your terms instead of guessing.
 - **Reference answers**: mark answers you trust with **Use as reference**. Similar questions

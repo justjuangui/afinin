@@ -259,6 +259,12 @@ async fn llm_usage(state: State<'_, AppState>) -> CmdResult<Vec<LlmUsage>> {
     blocking(&state, move |core| core.llm_usage_this_month()).await
 }
 
+/// Anthropic's list price for one of its model IDs, and when it was checked.
+#[tauri::command]
+fn known_llm_price(model: String) -> Option<(afinin_core::llm::TokenPrice, &'static str)> {
+    afinin_core::llm::known_price(&model).map(|p| (p, afinin_core::llm::KNOWN_PRICES_AS_OF))
+}
+
 // ---- costs ---------------------------------------------------------------
 
 #[tauri::command]
@@ -856,6 +862,7 @@ pub fn run() {
             has_llm_api_key,
             llm_log,
             llm_log_entry,
+            known_llm_price,
             clear_llm_log,
             assistant_conversations,
             assistant_turns,
