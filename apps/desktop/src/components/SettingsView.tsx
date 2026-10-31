@@ -270,6 +270,15 @@ export function SettingsView({ settings, onSaved, onRestored }: Props) {
             />
             Import AWS Cost Anomaly Detection findings ($0.01 per sync)
           </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={draft.usage_metrics}
+              onChange={(e) => setDraft({ ...draft, usage_metrics: e.target.checked })}
+            />
+            Read DynamoDB capacity usage from CloudWatch, to find unused and over-provisioned tables (2 metrics per
+            provisioned table per sync; $0.01 per 1,000)
+          </label>
 
           <h2>Assistant</h2>
           <label>

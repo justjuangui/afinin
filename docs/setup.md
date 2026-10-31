@@ -43,6 +43,10 @@ regions chosen in Settings). Cost Explorer charges $0.01 per request: a first sy
 dozen requests, later syncs about six per account. Settings shows what Afinín has cost you this
 month. Resource discovery uses free `Describe`/`List` calls.
 
+Optional, in Settings: **Read DynamoDB capacity usage from CloudWatch** finds provisioned tables
+that are unused or far over-provisioned. It reads 2 metrics per provisioned table per sync
+(CloudWatch charges $0.01 per 1,000), so it is off by default.
+
 ## 4. Optional: CUR 2.0 for per-resource costs
 
 **Accounts → Set up CUR** walks you through creating a CUR 2.0 export in the management account

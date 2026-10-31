@@ -88,6 +88,7 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
   - Secrets not read in 90+ days; disabled KMS keys (still billed)
   - ECR repositories unused for 90+ days, or keeping untagged images without a lifecycle policy
   - CloudWatch log groups that never expire (1 GiB+); EFS file systems without mount targets; empty Route 53 hosted zones
+  - DynamoDB provisioned tables with no reads or writes, or (without auto scaling) far more capacity than their busiest hour uses (CloudWatch metrics, opt-in)
 - **FR-32** Patterns & trends: top movers, cost growth by service, data transfer breakdown, Savings Plans / RI coverage and utilization.
 - **FR-33** Findings list with severity, estimated savings, affected resources, and a "how to fix" explanation. Findings can be dismissed/snoozed (stored locally).
 - **FR-34** Savings estimates use the customer's actual rates from CUR when available (including discounts, Savings Plans, RIs); otherwise public prices from the AWS Price List API, clearly labeled as "estimate (public price)".

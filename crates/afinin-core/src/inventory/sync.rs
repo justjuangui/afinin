@@ -38,6 +38,7 @@ pub async fn sync_inventory(
     config: &SdkConfig,
     source_account: &str,
     regions: &[String],
+    usage_metrics: bool,
     on_region: &(dyn Fn(usize, usize) + Send + Sync),
 ) -> Result<InventoryReport> {
     let identity = aws_sdk_sts::Client::new(config)
@@ -86,6 +87,7 @@ pub async fn sync_inventory(
                         config: &cfg,
                         account: &account,
                         region: &region,
+                        usage_metrics,
                     },
                     lightsail,
                 )
@@ -101,6 +103,7 @@ pub async fn sync_inventory(
         config: &home,
         account: &account,
         region: HOME_REGION,
+        usage_metrics,
     })
     .await;
     finished();

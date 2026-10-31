@@ -2,7 +2,7 @@
 
 //! Data stores: RDS, DynamoDB, ElastiCache and S3.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
 
@@ -120,6 +120,9 @@ pub async fn rds(ctx: &Ctx<'_>) -> Result<Collected> {
     Ok(out)
 }
 
+/// Days of CloudWatch capacity metrics read for provisioned tables.
+pub const DYNAMODB_METRIC_DAYS: i64 = 14;
+
 pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
     let client = aws_sdk_dynamodb::Client::new(ctx.config);
     let (acct, region) = (ctx.account, ctx.region);
@@ -143,6 +146,30 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
             let Some(me) = t.table_arn() else { continue };
             let mut r = Resource::new(T::DynamoDbTable, me, acct, region, name);
             r.name = Some(name.clone());
+            let capacity = |p: Option<&aws_sdk_dynamodb::types::ProvisionedThroughputDescription>| {
+                p.map_or((0, 0), |p| {
+                    (
+                        p.read_capacity_units().unwrap_or(0),
+                        p.write_capacity_units().unwrap_or(0),
+                    )
+                })
+            };
+            let (read, write) = capacity(t.provisioned_throughput());
+            let indexes = t.global_secondary_indexes();
+            let (gsi_read, gsi_write) = indexes
+                .iter()
+                .map(|i| capacity(i.provisioned_throughput()))
+                .fold((0, 0), |(r, w), (ir, iw)| (r + ir, w + iw));
+            let index_bytes: i64 = indexes.iter().filter_map(|i| i.index_size_bytes()).sum();
+            // Other regions holding a copy (global table); each copy is
+            // collected, and billed, in its own region.
+            let replicas: Vec<Value> = t
+                .replicas()
+                .iter()
+                .filter_map(|x| x.region_name())
+                .filter(|x| *x != region)
+                .map(|x| json!(x))
+                .collect();
             r.attr("status", s(t.table_status().map(|x| x.as_str())))
                 .attr("item_count", t.item_count().map(|v| json!(v)))
                 .attr("size_bytes", t.table_size_bytes().map(|v| json!(v)))
@@ -154,11 +181,196 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
                     .or(Some(json!("PROVISIONED"))),
                 )
                 .attr(
+                    "table_class",
+                    s(t.table_class_summary()
+                        .and_then(|c| c.table_class())
+                        .map(|c| c.as_str()))
+                    .or(Some(json!("STANDARD"))),
+                )
+                .attr("read_capacity", Some(json!(read)))
+                .attr("write_capacity", Some(json!(write)))
+                .attr("gsi_count", Some(json!(indexes.len())))
+                .attr("gsi_read_capacity", Some(json!(gsi_read)))
+                .attr("gsi_write_capacity", Some(json!(gsi_write)))
+                .attr("index_size_bytes", Some(json!(index_bytes)))
+                .attr(
+                    "replica_regions",
+                    (!replicas.is_empty()).then_some(Value::Array(replicas)),
+                )
+                .attr(
                     "stream_enabled",
                     Some(Value::Bool(t.latest_stream_arn().is_some())),
                 )
                 .attr("create_time", time(t.creation_date_time()));
+            // Continuous backups are billed per GB; unknown when not allowed.
+            match client
+                .describe_continuous_backups()
+                .table_name(name)
+                .send()
+                .await
+            {
+                Ok(b) => {
+                    let on = b
+                        .continuous_backups_description()
+                        .and_then(|d| d.point_in_time_recovery_description())
+                        .and_then(|p| p.point_in_time_recovery_status())
+                        == Some(&aws_sdk_dynamodb::types::PointInTimeRecoveryStatus::Enabled);
+                    r.attr("pitr", Some(Value::Bool(on)));
+                }
+                // One warning per region, not one per table.
+                Err(e) if out.warnings.is_empty() => out.warnings.push(format!(
+                    "dynamodb:DescribeContinuousBackups in {region}: {}",
+                    aws_err(e)
+                )),
+                Err(_) => {}
+            }
             out.resources.push(r);
+        }
+    }
+    if out.resources.is_empty() {
+        return Ok(out);
+    }
+    match autoscaled_tables(ctx).await {
+        Ok(scaled) => {
+            for r in &mut out.resources {
+                let on = scaled.contains(&r.native_id);
+                r.attr("autoscaling", Some(Value::Bool(on)));
+            }
+        }
+        Err(e) => out.warnings.push(format!(
+            "application-autoscaling:DescribeScalableTargets in {region}: {e}"
+        )),
+    }
+    // Usage only matters where capacity is paid for whether used or not.
+    let provisioned: Vec<String> = out
+        .resources
+        .iter()
+        .filter(|r| r.attrs.get("billing_mode").and_then(|v| v.as_str()) == Some("PROVISIONED"))
+        .map(|r| r.native_id.clone())
+        .collect();
+    if ctx.usage_metrics && !provisioned.is_empty() {
+        match consumed_capacity(ctx, &provisioned).await {
+            Ok(usage) => {
+                for r in &mut out.resources {
+                    if let Some(u) = usage.get(&r.native_id) {
+                        r.attr("metric_days", Some(json!(DYNAMODB_METRIC_DAYS)))
+                            .attr("consumed_read_units", Some(json!(u.read_total)))
+                            .attr("consumed_write_units", Some(json!(u.write_total)))
+                            .attr("peak_read_per_s", Some(json!(u.read_peak)))
+                            .attr("peak_write_per_s", Some(json!(u.write_peak)));
+                    }
+                }
+            }
+            Err(e) => out
+                .warnings
+                .push(format!("cloudwatch:GetMetricData in {region}: {e}")),
+        }
+    }
+    Ok(out)
+}
+
+/// Tables (by name) whose own or an index's capacity is auto scaled.
+async fn autoscaled_tables(ctx: &Ctx<'_>) -> Result<HashSet<String>> {
+    use aws_sdk_applicationautoscaling::types::ServiceNamespace;
+    let client = aws_sdk_applicationautoscaling::Client::new(ctx.config);
+    let mut out = HashSet::new();
+    for page in client
+        .describe_scalable_targets()
+        .service_namespace(ServiceNamespace::Dynamodb)
+        .into_paginator()
+        .send()
+        .try_collect()
+        .await
+        .map_err(aws_err)?
+    {
+        for t in page.scalable_targets() {
+            // `table/<name>` or `table/<name>/index/<index>`.
+            if let Some(rest) = t.resource_id().strip_prefix("table/") {
+                out.insert(rest.split('/').next().unwrap_or(rest).to_owned());
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Default)]
+struct Consumed {
+    read_total: f64,
+    write_total: f64,
+    /// The busiest hour's average units per second.
+    read_peak: f64,
+    write_peak: f64,
+}
+
+/// Capacity each table consumed over the last [`DYNAMODB_METRIC_DAYS`],
+/// hour by hour. Indexes have metrics of their own and aren't included. A
+/// table without data points consumed nothing.
+async fn consumed_capacity(
+    ctx: &Ctx<'_>,
+    tables: &[String],
+) -> Result<HashMap<String, Consumed>> {
+    use aws_sdk_cloudwatch::types::{Dimension, Metric, MetricDataQuery, MetricStat};
+    let client = aws_sdk_cloudwatch::Client::new(ctx.config);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let end = now - now % 3600;
+    let start = end - DYNAMODB_METRIC_DAYS * 86_400;
+    let mut out: HashMap<String, Consumed> = HashMap::new();
+    // GetMetricData takes up to 500 queries: two per table.
+    for chunk in tables.chunks(250) {
+        let mut req = client
+            .get_metric_data()
+            .start_time(aws_smithy_types::DateTime::from_secs(start))
+            .end_time(aws_smithy_types::DateTime::from_secs(end));
+        for (i, table) in chunk.iter().enumerate() {
+            out.entry(table.clone()).or_default();
+            for (kind, metric) in [
+                ("r", "ConsumedReadCapacityUnits"),
+                ("w", "ConsumedWriteCapacityUnits"),
+            ] {
+                let stat = MetricStat::builder()
+                    .metric(
+                        Metric::builder()
+                            .namespace("AWS/DynamoDB")
+                            .metric_name(metric)
+                            .dimensions(Dimension::builder().name("TableName").value(table).build())
+                            .build(),
+                    )
+                    .period(3600)
+                    .stat("Sum")
+                    .build();
+                req = req.metric_data_queries(
+                    MetricDataQuery::builder()
+                        .id(format!("{kind}{i}"))
+                        .metric_stat(stat)
+                        .return_data(true)
+                        .build(),
+                );
+            }
+        }
+        let pages: Vec<_> = req
+            .into_paginator()
+            .send()
+            .try_collect()
+            .await
+            .map_err(aws_err)?;
+        for m in pages.iter().flat_map(|p| p.metric_data_results()) {
+            let Some(id) = m.id() else { continue };
+            let (kind, i) = id.split_at(1);
+            let Some(table) = i.parse::<usize>().ok().and_then(|i| chunk.get(i)) else {
+                continue;
+            };
+            let u = out.entry(table.clone()).or_default();
+            let total: f64 = m.values().iter().sum();
+            let peak = m.values().iter().copied().fold(0.0, f64::max) / 3600.0;
+            if kind == "r" {
+                u.read_total += total;
+                u.read_peak = u.read_peak.max(peak);
+            } else {
+                u.write_total += total;
+                u.write_peak = u.write_peak.max(peak);
+            }
         }
     }
     Ok(out)

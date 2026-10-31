@@ -343,6 +343,7 @@ impl Afinin {
                         &config,
                         account_id,
                         &settings.inventory_regions,
+                        settings.usage_metrics,
                         &|done, total| progress(SyncStage::Inventory { done, total }),
                     )
                     .await

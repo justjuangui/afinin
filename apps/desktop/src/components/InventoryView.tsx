@@ -973,6 +973,10 @@ function listPriceNote(node: GraphNode): string {
   if (node.resource_type === "elasticfilesystem:file-system")
     return "Storage by class (and provisioned throughput); reads and writes from Infrequent Access come on top.";
   if (node.resource_type === "route53:hostedzone") return "Per hosted zone; DNS queries come on top.";
+  if (node.resource_type === "dynamodb:table")
+    return node.attrs.billing_mode === "PAY_PER_REQUEST"
+      ? "Storage (and backups) only; on-demand reads and writes are billed per request on top."
+      : "Storage, backups and provisioned capacity (indexes included); the free tier isn’t subtracted.";
   return "AWS public price, not measured spend.";
 }
 
