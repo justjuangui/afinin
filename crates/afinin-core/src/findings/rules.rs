@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 use time::Date;
 
-use super::pricing::{HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource, builtin, platform_monthly};
+use super::pricing::{
+    HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource, builtin, dynamodb_unit_monthly, platform_monthly,
+};
 use super::{Finding, FindingKind, FindingResource, SavingsBasis, Severity};
 use crate::cost::dates;
 use crate::inventory::graph::GraphEdge;
@@ -349,6 +351,7 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                     .into();
                 out.push(finish(f, savings, basis, Some(PriceSource::BuiltIn)));
             }
+            T::DynamoDbTable => out.extend(dynamodb_capacity(input, r)),
             T::LoadBalancer if str_attr(r, "state") == Some("active") => {
                 let groups: Vec<&Resource> = input
                     .edges
@@ -481,6 +484,83 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
 
 /// A NAT gateway is idle when CUR shows (almost) no bytes processed, or —
 /// without CUR — when nothing that could use it runs in its VPC.
+/// DynamoDB capacity findings below this monthly saving aren't worth a look.
+const DYNAMODB_MIN_SAVINGS: f64 = 1.0;
+
+/// A provisioned DynamoDB table that used none of its capacity, or (without
+/// auto scaling) much less than it pays for, over the measured days. Tables
+/// younger than that are skipped. Indexes have capacity and metrics of their
+/// own, which the estimate leaves out.
+fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
+    if str_attr(r, "billing_mode") != Some("PROVISIONED") || str_attr(r, "status") != Some("ACTIVE") {
+        return None;
+    }
+    let days = num_attr(r, "metric_days")?;
+    if age_days(r, "create_time", input.today)? < days as i64 {
+        return None;
+    }
+    let (read, write) = (
+        num_attr(r, "read_capacity").unwrap_or(0.0),
+        num_attr(r, "write_capacity").unwrap_or(0.0),
+    );
+    let (used_read, used_write) = (num_attr(r, "consumed_read_units")?, num_attr(r, "consumed_write_units")?);
+    let (read_unit, write_unit) = dynamodb_unit_monthly(r);
+    // The table's CUR cost includes storage, which stays: keep the estimate.
+    if used_read == 0.0 && used_write == 0.0 {
+        let savings = read * read_unit + write * write_unit;
+        if savings < DYNAMODB_MIN_SAVINGS {
+            return None;
+        }
+        let mut f = base("dynamodb-provisioned-unused", r)
+            .evidence("read_capacity", read)
+            .evidence("write_capacity", write)
+            .evidence("metric_days", days)
+            .evidence("item_count", num_attr(r, "item_count"));
+        f.title = format!("DynamoDB table {} had no reads or writes in {days} days", r.display_name());
+        f.summary = format!(
+            "It has {read} read and {write} write capacity units provisioned, billed every hour whether used or not. \
+             The account's free tier (25 of each per region) may cover part of it."
+        );
+        f.how_to_fix = "If the table is still needed, switch it to on-demand capacity (DynamoDB console → the table → \
+                        Additional settings → Read/write capacity → Edit): an idle on-demand table costs only its storage. \
+                        If it isn't, create a backup and delete the table."
+            .into();
+        return Some(finish(f, savings, SavingsBasis::PublicPrice, Some(PriceSource::BuiltIn)));
+    }
+    // Auto scaling already follows traffic.
+    if r.attrs.get("autoscaling").and_then(|v| v.as_bool()) != Some(false) {
+        return None;
+    }
+    // Twice the busiest hour's average, as headroom for spikes within an hour.
+    let target = |peak: f64| (peak * 2.0).ceil().max(1.0);
+    let (peak_read, peak_write) = (
+        num_attr(r, "peak_read_per_s").unwrap_or(0.0),
+        num_attr(r, "peak_write_per_s").unwrap_or(0.0),
+    );
+    let (new_read, new_write) = (target(peak_read).min(read), target(peak_write).min(write));
+    let savings = (read - new_read) * read_unit + (write - new_write) * write_unit;
+    if savings < DYNAMODB_MIN_SAVINGS {
+        return None;
+    }
+    let mut f = base("dynamodb-overprovisioned", r)
+        .evidence("read_capacity", read)
+        .evidence("write_capacity", write)
+        .evidence("peak_read_per_s", (peak_read * 100.0).round() / 100.0)
+        .evidence("peak_write_per_s", (peak_write * 100.0).round() / 100.0)
+        .evidence("metric_days", days);
+    f.title = format!("DynamoDB table {} uses a fraction of its provisioned capacity", r.display_name());
+    f.summary = format!(
+        "Its busiest hour in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
+         {read} read and {write} write units provisioned. Without auto scaling, unused capacity is billed every hour."
+    );
+    f.how_to_fix = format!(
+        "Lower the capacity to about {new_read} read and {new_write} write units (twice the busiest hour), turn on \
+         auto scaling, or switch to on-demand if traffic comes in bursts. First check that monthly jobs or seasonal \
+         peaks outside the last {days} days don't need more. Capacity can only be decreased a few times a day."
+    );
+    Some(finish(f, savings, SavingsBasis::PublicPrice, Some(PriceSource::BuiltIn)))
+}
+
 fn idle_nat(input: &RuleInput, r: &Resource) -> Option<Finding> {
     let vpc = r.vpc_id()?;
     let evidence = match input.nat_gb {
@@ -870,5 +950,69 @@ mod tests {
         // A repository whose images couldn't be listed has no price, not $0.
         assert_eq!(platform_monthly(&r(T::EcrRepository, "e-unknown", json!({}))), None);
         assert_eq!(platform_monthly(&r(T::EcrRepository, "e-empty", json!({"size_gib": 0.0}))), Some(0.0));
+    }
+
+    #[test]
+    fn dynamodb_capacity_rules() {
+        let r = |name: &str, attrs: serde_json::Value| {
+            let mut r = Resource::new(T::DynamoDbTable, format!("arn:{name}"), A, R, name);
+            r.attrs.insert("status".into(), json!("ACTIVE"));
+            r.attrs.insert("billing_mode".into(), json!("PROVISIONED"));
+            r.attrs.insert("create_time".into(), json!("2026-01-01T00:00:00Z"));
+            r.attrs.insert("metric_days".into(), json!(14));
+            r.attrs.insert("autoscaling".into(), json!(false));
+            for (k, v) in attrs.as_object().unwrap() {
+                r.attrs.insert(k.clone(), v.clone());
+            }
+            r
+        };
+        let used = |rr: f64, wr: f64| json!({"consumed_read_units": rr * 3600.0, "consumed_write_units": wr * 3600.0,
+                                             "peak_read_per_s": rr, "peak_write_per_s": wr});
+        let merge = |mut a: serde_json::Value, b: serde_json::Value| {
+            a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+            a
+        };
+        let cap = |rcu: u32, wcu: u32| json!({"read_capacity": rcu, "write_capacity": wcu});
+        let resources = vec![
+            r("t-idle", merge(cap(100, 50), used(0.0, 0.0))),
+            r("t-over", merge(cap(1000, 100), used(10.0, 40.0))),
+            r("t-right", merge(cap(30, 10), used(14.0, 4.5))),
+            // Auto scaling follows traffic; only no use at all is flagged.
+            r("t-scaled", merge(merge(cap(1000, 100), used(10.0, 40.0)), json!({"autoscaling": true}))),
+            r("t-scaled-idle", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"autoscaling": true}))),
+            // Too new to judge, no metrics, on-demand.
+            r("t-new", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"create_time": "2026-10-10T00:00:00Z"}))),
+            r("t-unknown", cap(100, 50)),
+            r("t-ondemand", merge(merge(cap(0, 0), used(0.0, 0.0)), json!({"billing_mode": "PAY_PER_REQUEST"}))),
+        ];
+        let findings = run(&resources, &[], &HashMap::new(), None);
+        let got: Vec<(&str, String, Option<f64>)> = findings
+            .iter()
+            .map(|f| (f.rule, f.resources[0].label.clone(), f.monthly_savings))
+            .collect();
+        let (rcu, wcu) = (0.00013 * 730.0, 0.00065 * 730.0);
+        let round = |v: f64| Some((v * 100.0).round() / 100.0);
+        assert_eq!(
+            got,
+            vec![
+                ("dynamodb-provisioned-unused", "t-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
+                // Keeps 20 reads and 80 writes: twice the busiest hour.
+                ("dynamodb-overprovisioned", "t-over".to_owned(), round(980.0 * rcu + 20.0 * wcu)),
+                ("dynamodb-provisioned-unused", "t-scaled-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
+            ]
+        );
+
+        // List price: storage by class (indexes included), backups on the
+        // table's data, and all provisioned capacity.
+        let gib = 1024.0 * 1024.0 * 1024.0;
+        let price = platform_monthly(&r("t", json!({"size_bytes": 10.0 * gib, "index_size_bytes": 2.0 * gib,
+            "pitr": true, "read_capacity": 10, "write_capacity": 5, "gsi_read_capacity": 4, "gsi_write_capacity": 2})))
+        .unwrap();
+        assert!((price - (12.0 * 0.25 + 10.0 * 0.20 + 14.0 * rcu + 7.0 * wcu)).abs() < 1e-9);
+        let ia = platform_monthly(&r("t", json!({"size_bytes": 10.0 * gib, "table_class": "STANDARD_INFREQUENT_ACCESS"})))
+            .unwrap();
+        assert!((ia - 10.0 * 0.10).abs() < 1e-9);
+        // Unknown size: no price rather than $0.
+        assert_eq!(platform_monthly(&r("t", json!({}))), None);
     }
 }

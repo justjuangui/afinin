@@ -41,10 +41,33 @@ pub mod builtin {
     pub const EFS_BASELINE_MIBPS_PER_GIB: f64 = 50.0 / 1024.0;
     /// Per hosted zone (the first 25 of an account).
     pub const ROUTE53_ZONE: f64 = 0.50;
+    /// DynamoDB per GB stored, by table class (Standard / Standard-IA).
+    pub const DYNAMODB_GB: f64 = 0.25;
+    pub const DYNAMODB_IA_GB: f64 = 0.10;
+    /// DynamoDB provisioned capacity per unit-hour, by table class.
+    pub const DYNAMODB_RCU_HOUR: f64 = 0.00013;
+    pub const DYNAMODB_WCU_HOUR: f64 = 0.00065;
+    pub const DYNAMODB_IA_RCU_HOUR: f64 = 0.00016;
+    pub const DYNAMODB_IA_WCU_HOUR: f64 = 0.00081;
+    /// DynamoDB continuous backups (point-in-time recovery) per GB.
+    pub const DYNAMODB_PITR_GB: f64 = 0.20;
+}
+
+/// Monthly price of one read and one write capacity unit for a DynamoDB
+/// table, by its table class.
+pub fn dynamodb_unit_monthly(r: &crate::inventory::Resource) -> (f64, f64) {
+    let ia = r.attrs.get("table_class").and_then(|v| v.as_str()) == Some("STANDARD_INFREQUENT_ACCESS");
+    let (read, write) = if ia {
+        (builtin::DYNAMODB_IA_RCU_HOUR, builtin::DYNAMODB_IA_WCU_HOUR)
+    } else {
+        (builtin::DYNAMODB_RCU_HOUR, builtin::DYNAMODB_WCU_HOUR)
+    };
+    (read * HOURS_PER_MONTH, write * HOURS_PER_MONTH)
 }
 
 /// Monthly list price of a resource billed per item or per GB stored
-/// (Secrets Manager, KMS, ECR, CloudWatch Logs, EFS, Route 53). Request,
+/// (Secrets Manager, KMS, ECR, CloudWatch Logs, EFS, Route 53) and of a
+/// DynamoDB table's storage, backups and provisioned capacity. Request,
 /// ingestion and transfer charges come on top. None for other types.
 pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
     use crate::inventory::ResourceType as T;
@@ -80,6 +103,24 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
             )
         }
         T::Route53HostedZone => Some(builtin::ROUTE53_ZONE),
+        // The free tier (25 GB and 25 read and write units per region) isn't
+        // subtracted: it's shared by every table of the account.
+        T::DynamoDbTable => {
+            const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+            let table_gib = r.attrs.get("size_bytes")?.as_f64()? / GIB;
+            let gib = table_gib + num("index_size_bytes") / GIB;
+            let ia = text("table_class") == Some("STANDARD_INFREQUENT_ACCESS");
+            let storage = gib * if ia { builtin::DYNAMODB_IA_GB } else { builtin::DYNAMODB_GB };
+            let backups = if r.attrs.get("pitr").and_then(|v| v.as_bool()) == Some(true) {
+                table_gib * builtin::DYNAMODB_PITR_GB
+            } else {
+                0.0
+            };
+            let (read, write) = dynamodb_unit_monthly(r);
+            let capacity = (num("read_capacity") + num("gsi_read_capacity")) * read
+                + (num("write_capacity") + num("gsi_write_capacity")) * write;
+            Some(storage + backups + capacity)
+        }
         _ => None,
     }
 }

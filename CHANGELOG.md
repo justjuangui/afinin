@@ -34,6 +34,11 @@ First feature-complete version (MVP, milestones M0–M6).
   and waste rules: unread secrets, disabled keys, idle repositories and untagged images without a
   lifecycle policy, log groups that never expire, file systems without mount targets, empty
   hosted zones. Only metadata is read (never secret values, key material, images or log events).
+- **DynamoDB**: provisioned capacity (tables and indexes), table class, replicas, point-in-time
+  recovery and auto scaling in the inventory; a monthly list price (storage, backups, capacity) on
+  the graph; and, with the opt-in CloudWatch usage setting, findings for unused and
+  over-provisioned tables. The IAM policies gain `dynamodb:DescribeContinuousBackups`,
+  `application-autoscaling:DescribeScalableTargets` and `cloudwatch:GetMetricData`.
 - **Infrastructure as code**: which tool made each resource (CloudFormation, CDK, SAM, Serverless,
   Beanstalk, Copilot, Amplify, Terraform, Pulumi) from stacks, tags and generated names, with
   confidence and evidence; "Managed by" graph filter, coverage card in Findings, assistant tool. The

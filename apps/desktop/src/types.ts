@@ -166,6 +166,7 @@ export interface Settings {
   snapshot_age_days: number;
   commitments_enabled: boolean;
   import_aws_anomalies: boolean;
+  usage_metrics: boolean;
   llm: LlmSettings;
   retention_months: number;
   theme: "system" | "light" | "dark";

@@ -34,6 +34,10 @@ pub struct Settings {
     pub commitments_enabled: bool,
     /// Import AWS Cost Anomaly Detection findings on each sync ($0.01 per request).
     pub import_aws_anomalies: bool,
+    /// Read usage metrics from CloudWatch during inventory sync, for
+    /// over-provisioning findings (FR-31: opt-in, as GetMetricData costs
+    /// $0.01 per 1,000 metrics).
+    pub usage_metrics: bool,
     /// Optional assistant (FR-40); the API key lives in the keychain.
     pub llm: LlmSettings,
     /// Months of cost history and request logs to keep; 0 keeps everything (FR-51).
@@ -64,6 +68,7 @@ impl Default for Settings {
             snapshot_age_days: 90,
             commitments_enabled: true,
             import_aws_anomalies: false,
+            usage_metrics: false,
             llm: LlmSettings::default(),
             retention_months: 0,
             theme: Theme::System,

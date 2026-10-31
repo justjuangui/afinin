@@ -32,6 +32,8 @@ pub struct Ctx<'a> {
     pub config: &'a SdkConfig,
     pub account: &'a str,
     pub region: &'a str,
+    /// Read CloudWatch usage metrics (opt-in: they cost money).
+    pub usage_metrics: bool,
 }
 
 /// Concise `Code: message` for collector warnings.
