@@ -531,7 +531,8 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
     if r.attrs.get("autoscaling").and_then(|v| v.as_bool()) != Some(false) {
         return None;
     }
-    // Twice the busiest hour's average, as headroom for spikes within an hour.
+    // Twice the busiest five minutes' average, as headroom; shorter spikes
+    // are what burst capacity absorbs.
     let target = |peak: f64| (peak * 2.0).ceil().max(1.0);
     let (peak_read, peak_write) = (
         num_attr(r, "peak_read_per_s").unwrap_or(0.0),
@@ -550,11 +551,11 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
         .evidence("metric_days", days);
     f.title = format!("DynamoDB table {} uses a fraction of its provisioned capacity", r.display_name());
     f.summary = format!(
-        "Its busiest hour in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
+        "Its busiest five minutes in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
          {read} read and {write} write units provisioned. Without auto scaling, unused capacity is billed every hour."
     );
     f.how_to_fix = format!(
-        "Lower the capacity to about {new_read} read and {new_write} write units (twice the busiest hour), turn on \
+        "Lower the capacity to about {new_read} read and {new_write} write units (twice that peak), turn on \
          auto scaling, or switch to on-demand if traffic comes in bursts. First check that monthly jobs or seasonal \
          peaks outside the last {days} days don't need more. Capacity can only be decreased a few times a day."
     );
@@ -966,7 +967,7 @@ mod tests {
             }
             r
         };
-        let used = |rr: f64, wr: f64| json!({"consumed_read_units": rr * 3600.0, "consumed_write_units": wr * 3600.0,
+        let used = |rr: f64, wr: f64| json!({"consumed_read_units": rr * 300.0, "consumed_write_units": wr * 300.0,
                                              "peak_read_per_s": rr, "peak_write_per_s": wr});
         let merge = |mut a: serde_json::Value, b: serde_json::Value| {
             a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
@@ -996,7 +997,7 @@ mod tests {
             got,
             vec![
                 ("dynamodb-provisioned-unused", "t-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
-                // Keeps 20 reads and 80 writes: twice the busiest hour.
+                // Keeps 20 reads and 80 writes: twice the busiest five minutes.
                 ("dynamodb-overprovisioned", "t-over".to_owned(), round(980.0 * rcu + 20.0 * wcu)),
                 ("dynamodb-provisioned-unused", "t-scaled-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
             ]
@@ -1005,8 +1006,8 @@ mod tests {
         // List price: storage by class (indexes included), backups on the
         // table's data, and all provisioned capacity.
         let gib = 1024.0 * 1024.0 * 1024.0;
-        let price = platform_monthly(&r("t", json!({"size_bytes": 10.0 * gib, "index_size_bytes": 2.0 * gib,
-            "pitr": true, "read_capacity": 10, "write_capacity": 5, "gsi_read_capacity": 4, "gsi_write_capacity": 2})))
+        let price = platform_monthly(&r("t", json!({"size_bytes": 8.0 * gib, "local_index_size_bytes": 2.0 * gib,
+            "index_size_bytes": 2.0 * gib, "pitr": true, "read_capacity": 10, "write_capacity": 5, "gsi_read_capacity": 4, "gsi_write_capacity": 2})))
         .unwrap();
         assert!((price - (12.0 * 0.25 + 10.0 * 0.20 + 14.0 * rcu + 7.0 * wcu)).abs() < 1e-9);
         let ia = platform_monthly(&r("t", json!({"size_bytes": 10.0 * gib, "table_class": "STANDARD_INFREQUENT_ACCESS"})))
