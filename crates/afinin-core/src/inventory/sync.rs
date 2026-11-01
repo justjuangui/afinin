@@ -128,9 +128,18 @@ pub async fn sync_inventory(
         found.apply_stacks(&all_stacks);
         report.resources += found.resources.len();
         report.warnings.extend(found.warnings.iter().cloned());
-        db.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .replace_inventory(source_account, &region, &found)?;
+        let db = db.lock().unwrap_or_else(|e| e.into_inner());
+        // Usage metrics cost money: they show with Afinín's own AWS costs.
+        for &metrics in &found.metric_calls {
+            db.record_api_call(
+                source_account,
+                "cloudwatch",
+                "GetMetricData",
+                metrics as f64 * collect::data::METRIC_COST_USD,
+            )?;
+        }
+        db.replace_inventory(source_account, &region, &found)?;
+        drop(db);
         kept.push(region);
     }
     db.lock()

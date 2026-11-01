@@ -34,6 +34,8 @@ const escapeHtml = (s: string) =>
 export function CostChart({ periods, series, granularity, unit, estimatedPeriods }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
+  // The segment under the pointer, marked in the tooltip.
+  const hovered = useRef<string | null>(null);
   const scheme = useDarkMode() ? "dark" : "light";
 
   useEffect(() => {
@@ -42,6 +44,16 @@ export function CostChart({ periods, series, granularity, unit, estimatedPeriods
     chart.current = instance;
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(el.current);
+    // The axis tooltip doesn't know which segment the pointer is on: track
+    // it and redraw the tooltip when it changes within the same bar.
+    instance.on("mouseover", (e) => {
+      const p = e as { seriesName?: string; seriesIndex?: number; dataIndex?: number };
+      hovered.current = p.seriesName ?? null;
+      instance.dispatchAction({ type: "showTip", seriesIndex: p.seriesIndex, dataIndex: p.dataIndex });
+    });
+    instance.on("mouseout", () => {
+      hovered.current = null;
+    });
     return () => {
       observer.disconnect();
       instance.dispose();
@@ -88,7 +100,8 @@ export function CostChart({ periods, series, granularity, unit, estimatedPeriods
               .sort((a, b) => b.value - a.value)
               .map(
                 (p) =>
-                  `<div class="tt-row"><span class="tt-swatch" style="background:${p.color}"></span>` +
+                  `<div class="tt-row${p.seriesName === hovered.current ? " tt-row-active" : ""}">` +
+                  `<span class="tt-swatch" style="background:${p.color}"></span>` +
                   `<span class="tt-label">${escapeHtml(p.seriesName)}</span><span class="tt-value">${money(p.value, unit)}</span></div>`,
               )
               .join("");

@@ -476,6 +476,8 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                     out.push(f);
                 }
             }
+            // After the stopped-instance rule, which takes stopped instances.
+            T::Ec2Instance | T::RdsInstance | T::ElastiCacheCluster => out.extend(old_generation(input, r)),
             _ => {}
         }
     }
@@ -484,6 +486,82 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
 
 /// A NAT gateway is idle when CUR shows (almost) no bytes processed, or —
 /// without CUR — when nothing that could use it runs in its VPC.
+/// Previous-generation families and the current one to move to, by
+/// prefix of the instance type (EC2), class (RDS) or node type (ElastiCache).
+/// GPU and storage-dense families people choose for specific hardware are
+/// left out.
+const OLD_GENERATIONS: &[(&str, &str)] = &[
+    ("t1.", "t3"),
+    ("t2.", "t3"),
+    ("m1.", "m7i"),
+    ("m2.", "m7i"),
+    ("m3.", "m7i"),
+    ("m4.", "m7i"),
+    ("c1.", "c7i"),
+    ("c3.", "c7i"),
+    ("c4.", "c7i"),
+    ("r3.", "r7i"),
+    ("r4.", "r7i"),
+    ("db.t2.", "db.t3"),
+    ("db.m1.", "db.m6i"),
+    ("db.m2.", "db.m6i"),
+    ("db.m3.", "db.m6i"),
+    ("db.m4.", "db.m6i"),
+    ("db.r3.", "db.r6i"),
+    ("db.r4.", "db.r6i"),
+    ("cache.t1.", "cache.t3"),
+    ("cache.t2.", "cache.t3"),
+    ("cache.m1.", "cache.m7g"),
+    ("cache.m3.", "cache.m7g"),
+    ("cache.m4.", "cache.m7g"),
+    ("cache.r3.", "cache.r7g"),
+    ("cache.r4.", "cache.r7g"),
+];
+
+/// A running instance, database or cache node on a previous-generation
+/// type. The current generation costs the same or less per hour and is
+/// faster, but the exact saving depends on the size chosen, so none is
+/// claimed.
+fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
+    let (key, running) = match r.resource_type {
+        T::Ec2Instance => ("instance_type", str_attr(r, "state") == Some("running")),
+        T::RdsInstance => ("instance_class", str_attr(r, "status") == Some("available")),
+        _ => ("node_type", str_attr(r, "status") == Some("available")),
+    };
+    let kind = str_attr(r, key)?;
+    let (_, next) = OLD_GENERATIONS.iter().find(|(old, _)| kind.starts_with(old))?;
+    if !running {
+        return None;
+    }
+    let size = kind.rsplit('.').next().unwrap_or_default();
+    let mut f = base("old-generation-type", r)
+        .evidence(key, kind)
+        .evidence("current_generation", *next)
+        .evidence("actual_cost_30d", input.actual(r));
+    f.severity = Severity::Low;
+    f.title = format!("{} runs on previous-generation {kind}", r.display_name());
+    f.summary = format!(
+        "{kind} is a previous generation. The current {next} family costs the same or less per hour for the same \
+         size, with faster processors and networking."
+    );
+    f.how_to_fix = match r.resource_type {
+        T::Ec2Instance => format!(
+            "Stop the instance, change its type to {next}.{size} (Actions → Instance settings → Change instance type) \
+             and start it again, in a maintenance window. Check the AMI supports the newer family (ENA and NVMe \
+             drivers); Graviton types are cheaper still if your software runs on ARM."
+        ),
+        T::RdsInstance => format!(
+            "Modify the instance class to {next}.{size} (or a Graviton class) in the RDS console, during the next \
+             maintenance window or right away. Check your engine version supports it; Multi-AZ keeps the downtime short."
+        ),
+        _ => format!(
+            "Change the node type to {next}.{size} in the ElastiCache console (Modify); it's applied online for Redis \
+             and Valkey. Check your engine version supports it."
+        ),
+    };
+    Some(f)
+}
+
 /// DynamoDB capacity findings below this monthly saving aren't worth a look.
 const DYNAMODB_MIN_SAVINGS: f64 = 1.0;
 
@@ -958,6 +1036,41 @@ mod tests {
         // A repository whose images couldn't be listed has no price, not $0.
         assert_eq!(platform_monthly(&r(T::EcrRepository, "e-unknown", json!({}))), None);
         assert_eq!(platform_monthly(&r(T::EcrRepository, "e-empty", json!({"size_gib": 0.0}))), Some(0.0));
+    }
+
+    #[test]
+    fn old_generation_types() {
+        let r = |t: T, name: &str, attrs: serde_json::Value| {
+            let mut r = Resource::new(t, format!("arn:{name}"), A, R, name);
+            for (k, v) in attrs.as_object().unwrap() {
+                r.attrs.insert(k.clone(), v.clone());
+            }
+            r
+        };
+        let resources = vec![
+            r(T::Ec2Instance, "i-old", json!({"instance_type": "m4.large", "state": "running"})),
+            r(T::Ec2Instance, "i-new", json!({"instance_type": "m7i.large", "state": "running"})),
+            // t3 shares a prefix with nothing old; t2 does.
+            r(T::Ec2Instance, "i-t3", json!({"instance_type": "t3.micro", "state": "running"})),
+            r(T::RdsInstance, "db-old", json!({"instance_class": "db.t2.micro", "status": "available"})),
+            r(T::ElastiCacheCluster, "c-old", json!({"node_type": "cache.r4.large", "status": "available"})),
+            r(T::Ec2Instance, "i-off", json!({"instance_type": "c4.xlarge", "state": "terminated"})),
+        ];
+        let findings = run(&resources, &[], &HashMap::new(), None);
+        let got: Vec<(&str, String, Option<&serde_json::Value>)> = findings
+            .iter()
+            .map(|f| (f.rule, f.resources[0].label.clone(), f.evidence.get("current_generation")))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("old-generation-type", "i-old".to_owned(), Some(&json!("m7i"))),
+                ("old-generation-type", "db-old".to_owned(), Some(&json!("db.t3"))),
+                ("old-generation-type", "c-old".to_owned(), Some(&json!("cache.r7g"))),
+            ]
+        );
+        assert!(findings.iter().all(|f| f.monthly_savings.is_none()));
+        assert!(findings[0].how_to_fix.contains("m7i.large"));
     }
 
     #[test]

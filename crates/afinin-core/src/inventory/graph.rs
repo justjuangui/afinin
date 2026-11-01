@@ -389,6 +389,55 @@ pub struct Application {
     pub cost: Option<f64>,
 }
 
+/// How much of the inventory carries tags (FR-31).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TagCoverage {
+    /// Resources that can carry tags (network plumbing and bulk types, such
+    /// as snapshots and log groups, excluded).
+    pub total: usize,
+    /// With at least one tag of your own (`aws:` tags and `Name` don't count).
+    pub tagged: usize,
+    /// Per cost allocation tag key from Settings: resources carrying it.
+    pub by_key: Vec<(String, usize)>,
+    /// Without any tag of your own, by resource type, most first.
+    pub untagged_by_type: Vec<super::iac::TypeCount>,
+}
+
+pub fn tag_coverage(resources: &[Resource], keys: &[String]) -> TagCoverage {
+    let mut c = TagCoverage {
+        by_key: keys.iter().map(|k| (k.clone(), 0)).collect(),
+        ..Default::default()
+    };
+    let mut untagged: BTreeMap<ResourceType, usize> = BTreeMap::new();
+    for r in resources.iter().filter(|r| {
+        !r.resource_type.is_network_plumbing()
+            && !r.resource_type.is_bulk()
+            && r.resource_type.is_taggable()
+    }) {
+        c.total += 1;
+        if r.tags.keys().any(|k| !k.starts_with("aws:") && k != "Name") {
+            c.tagged += 1;
+        } else {
+            *untagged.entry(r.resource_type).or_default() += 1;
+        }
+        for (key, n) in &mut c.by_key {
+            if r.tags.get(key).is_some_and(|v| !v.is_empty()) {
+                *n += 1;
+            }
+        }
+    }
+    c.untagged_by_type = untagged
+        .into_iter()
+        .map(|(resource_type, count)| super::iac::TypeCount {
+            resource_type,
+            label: resource_type.label(),
+            count,
+        })
+        .collect();
+    c.untagged_by_type.sort_by_key(|t| std::cmp::Reverse(t.count));
+    c
+}
+
 pub fn applications(resources: &[Resource], tag_key: &str) -> Vec<Application> {
     let mut groups: BTreeMap<String, Application> = BTreeMap::new();
     for r in resources
@@ -753,6 +802,28 @@ mod tests {
         assert_eq!(node("eip-2").service, Some("EC2 - Other"));
     }
 
+
+    #[test]
+    fn tag_coverage_counts_own_tags_only() {
+        let tagged = |t: ResourceType, id: &str, tags: &[(&str, &str)]| {
+            let mut r = Resource::new(t, format!("arn:{id}"), "1", "us-east-1", id);
+            r.tags = tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            r
+        };
+        let resources = vec![
+            tagged(ResourceType::Ec2Instance, "i-1", &[("app", "web"), ("Name", "web-1")]),
+            tagged(ResourceType::Ec2Instance, "i-2", &[("Name", "old")]),
+            tagged(ResourceType::S3Bucket, "b", &[("aws:cloudformation:stack-name", "s")]),
+            tagged(ResourceType::LambdaFunction, "f", &[("team", "data"), ("app", "")]),
+            // Bulk types don't count.
+            tagged(ResourceType::EbsSnapshot, "snap", &[]),
+        ];
+        let c = tag_coverage(&resources, &["app".into()]);
+        assert_eq!((c.total, c.tagged), (4, 2));
+        assert_eq!(c.by_key, vec![("app".to_owned(), 1)]);
+        assert_eq!(c.untagged_by_type[0].resource_type, ResourceType::Ec2Instance);
+        assert_eq!(c.untagged_by_type.iter().map(|t| t.count).sum::<usize>(), 2);
+    }
 
     #[test]
     fn untaggable_resources_are_never_untagged() {

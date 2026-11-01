@@ -328,7 +328,8 @@ input[type="date"] { width: auto; margin-top: 0; padding: 5px 8px; }
 .cost-chart { width: 100%; height: 340px; }
 .tt { font-size: 12px; min-width: 220px; }
 .tt-head { display: flex; justify-content: space-between; gap: 16px; font-weight: 600; margin-bottom: 6px; }
-.tt-row { display: flex; align-items: center; gap: 8px; line-height: 1.7; }
+.tt-row { display: flex; align-items: center; gap: 8px; line-height: 1.7; margin: 0 -6px; padding: 0 6px; border-radius: 4px; }
+.tt-row-active { background: color-mix(in srgb, var(--text) 12%, transparent); font-weight: 600; }
 .tt-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .tt-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .tt-value { font-variant-numeric: tabular-nums; }

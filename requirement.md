@@ -82,7 +82,7 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
   - Idle NAT Gateways; high NAT data-processing costs
   - Stopped EC2 instances still paying for EBS
   - Low-utilization EC2/RDS (CloudWatch metrics — opt-in, as metric API calls cost money)
-  - S3 buckets without lifecycle policies; old-generation instance types
+  - S3 buckets without lifecycle policies; old-generation instance types (EC2, RDS, ElastiCache: no saving claimed, as it depends on the size chosen)
   - Untagged resources (tag coverage %)
   - Lightsail: unattached static IPs and disks, stopped instances
   - Secrets not read in 90+ days; disabled KMS keys (still billed)

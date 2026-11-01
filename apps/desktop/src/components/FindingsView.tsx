@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { addDays, todayUtc } from "../dates";
 import { money, percent } from "../format";
-import type { ContextEntry, Finding, FindingKind, IacSummary, Insights, Severity } from "../types";
+import type { ContextEntry, Finding, FindingKind, IacSummary, Insights, Severity, TagCoverage } from "../types";
 import { Callout } from "./Callout";
 
 const SEVERITY: Record<Severity, { label: string; icon: string }> = {
@@ -278,6 +278,7 @@ function Trends({ insights }: { insights: Insights }) {
       </section>
 
       <IacCoverage iac={insights.iac} />
+      <TagCoverageCard tags={insights.tags} />
 
       <section className="panel">
         <h2>Savings Plans &amp; RIs</h2>
@@ -326,6 +327,60 @@ function shortService(service: string): string {
 }
 
 /** How much of the inventory was made as code, and with which tools. */
+function TagCoverageCard({ tags }: { tags: TagCoverage }) {
+  if (tags.total === 0) return null;
+  const pct = (n: number) => Math.round((n / tags.total) * 100);
+  const untagged = tags.total - tags.tagged;
+  return (
+    <section className="panel">
+      <h2>Tag coverage</h2>
+      <p className="muted small">
+        {pct(tags.tagged)}% of {tags.total} resources have at least one tag of your own (<code>aws:</code> tags and{" "}
+        <code>Name</code> don&apos;t count).
+      </p>
+      <div className="iac-bar" role="img" aria-label={`${pct(tags.tagged)}% tagged`}>
+        <span style={{ width: `${pct(tags.tagged)}%` }} />
+      </div>
+      <table className="breakdown compact">
+        <tbody>
+          {tags.by_key.map(([key, n]) => (
+            <tr key={key}>
+              <td>
+                <code>{key}</code>
+              </td>
+              <td className="num">{n}</td>
+              <td className="num muted small">{pct(n)}%</td>
+            </tr>
+          ))}
+          {untagged > 0 && (
+            <tr>
+              <td>No tags</td>
+              <td className="num">{untagged}</td>
+              <td
+                className="num muted small"
+                title={tags.untagged_by_type.map((u) => `${u.label}: ${u.count}`).join(", ")}
+              >
+                {tags.untagged_by_type
+                  .slice(0, 2)
+                  .map((u) => `${u.count} ${u.label}`)
+                  .join(", ")}
+                {tags.untagged_by_type.length > 2 && "…"}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className="muted small">
+        {tags.by_key.length === 0
+          ? "Add cost allocation tag keys in Settings to see coverage per key. "
+          : "Keys are the cost allocation tags chosen in Settings. "}
+        Untagged resources can&apos;t be grouped into applications or split in cost reports; filter the graph by a tag
+        key&apos;s <b>(untagged)</b> value to find them.
+      </p>
+    </section>
+  );
+}
+
 function IacCoverage({ iac }: { iac: IacSummary }) {
   if (iac.total === 0) return null;
   const managed = iac.total - iac.unmanaged;
