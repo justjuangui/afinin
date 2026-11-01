@@ -161,6 +161,13 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
                 .map(|i| capacity(i.provisioned_throughput()))
                 .fold((0, 0), |(r, w), (ir, iw)| (r + ir, w + iw));
             let index_bytes: i64 = indexes.iter().filter_map(|i| i.index_size_bytes()).sum();
+            // Local indexes have no capacity of their own, but are stored and
+            // backed up with the table.
+            let local_bytes: i64 = t
+                .local_secondary_indexes()
+                .iter()
+                .filter_map(|i| i.index_size_bytes())
+                .sum();
             // Other regions holding a copy (global table); each copy is
             // collected, and billed, in its own region.
             let replicas: Vec<Value> = t
@@ -193,6 +200,7 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
                 .attr("gsi_read_capacity", Some(json!(gsi_read)))
                 .attr("gsi_write_capacity", Some(json!(gsi_write)))
                 .attr("index_size_bytes", Some(json!(index_bytes)))
+                .attr("local_index_size_bytes", Some(json!(local_bytes)))
                 .attr(
                     "replica_regions",
                     (!replicas.is_empty()).then_some(Value::Array(replicas)),
@@ -252,7 +260,8 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
         match consumed_capacity(ctx, &provisioned).await {
             Ok(usage) => {
                 for r in &mut out.resources {
-                    if let Some(u) = usage.get(&r.native_id) {
+                    // A table whose metrics failed is unknown, not unused.
+                    if let Some(u) = usage.get(&r.native_id).filter(|u| !u.failed) {
                         r.attr("metric_days", Some(json!(DYNAMODB_METRIC_DAYS)))
                             .attr("consumed_read_units", Some(json!(u.read_total)))
                             .attr("consumed_write_units", Some(json!(u.write_total)))
@@ -297,14 +306,20 @@ async fn autoscaled_tables(ctx: &Ctx<'_>) -> Result<HashSet<String>> {
 struct Consumed {
     read_total: f64,
     write_total: f64,
-    /// The busiest hour's average units per second.
+    /// The busiest five minutes' average units per second.
     read_peak: f64,
     write_peak: f64,
+    /// A metric query came back with an error.
+    failed: bool,
 }
 
+/// Seconds per data point: DynamoDB's burst capacity holds up to five
+/// minutes of unused capacity, so shorter spikes are absorbed by it.
+const METRIC_PERIOD: i64 = 300;
+
 /// Capacity each table consumed over the last [`DYNAMODB_METRIC_DAYS`],
-/// hour by hour. Indexes have metrics of their own and aren't included. A
-/// table without data points consumed nothing.
+/// five minutes at a time. Indexes have metrics of their own and aren't
+/// included. A table without data points consumed nothing.
 async fn consumed_capacity(
     ctx: &Ctx<'_>,
     tables: &[String],
@@ -314,7 +329,7 @@ async fn consumed_capacity(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
-    let end = now - now % 3600;
+    let end = now - now % METRIC_PERIOD;
     let start = end - DYNAMODB_METRIC_DAYS * 86_400;
     let mut out: HashMap<String, Consumed> = HashMap::new();
     // GetMetricData takes up to 500 queries: two per table.
@@ -337,7 +352,7 @@ async fn consumed_capacity(
                             .dimensions(Dimension::builder().name("TableName").value(table).build())
                             .build(),
                     )
-                    .period(3600)
+                    .period(METRIC_PERIOD as i32)
                     .stat("Sum")
                     .build();
                 req = req.metric_data_queries(
@@ -362,8 +377,14 @@ async fn consumed_capacity(
                 continue;
             };
             let u = out.entry(table.clone()).or_default();
+            // CloudWatch answers per query: `Complete`, or `PartialData` on
+            // all but the last page; anything else means no reliable data.
+            use aws_sdk_cloudwatch::types::StatusCode;
+            if !matches!(m.status_code(), Some(StatusCode::Complete | StatusCode::PartialData)) {
+                u.failed = true;
+            }
             let total: f64 = m.values().iter().sum();
-            let peak = m.values().iter().copied().fold(0.0, f64::max) / 3600.0;
+            let peak = m.values().iter().copied().fold(0.0, f64::max) / METRIC_PERIOD as f64;
             if kind == "r" {
                 u.read_total += total;
                 u.read_peak = u.read_peak.max(peak);

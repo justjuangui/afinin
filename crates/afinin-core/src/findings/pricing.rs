@@ -107,7 +107,10 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
         // subtracted: it's shared by every table of the account.
         T::DynamoDbTable => {
             const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
-            let table_gib = r.attrs.get("size_bytes")?.as_f64()? / GIB;
+            // Backups cover the table and its local indexes; global indexes
+            // are stored, but not backed up, separately.
+            let table_gib =
+                (r.attrs.get("size_bytes")?.as_f64()? + num("local_index_size_bytes")) / GIB;
             let gib = table_gib + num("index_size_bytes") / GIB;
             let ia = text("table_class") == Some("STANDARD_INFREQUENT_ACCESS");
             let storage = gib * if ia { builtin::DYNAMODB_IA_GB } else { builtin::DYNAMODB_GB };
