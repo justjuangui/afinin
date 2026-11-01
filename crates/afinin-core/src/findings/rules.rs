@@ -557,12 +557,14 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
     f.title = format!("DynamoDB table {} uses a fraction of its provisioned capacity", r.display_name());
     f.summary = format!(
         "Its busiest minute in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
-         {read} read and {write} write units provisioned. Without auto scaling, unused capacity is billed every hour."
+         {read} read and {write} write units provisioned. Without auto scaling, unused capacity is billed every hour. \
+         CloudWatch measures per minute, so spikes lasting seconds don't show."
     );
     f.how_to_fix = format!(
         "Lower the capacity to about {new_read} read and {new_write} write units (twice that peak), turn on \
          auto scaling, or switch to on-demand if traffic comes in bursts. First check that monthly jobs or seasonal \
-         peaks outside the last {days} days don't need more. Capacity can only be decreased a few times a day."
+         peaks outside the last {days} days don't need more. Lower it in steps and watch the table's throttled \
+         requests in CloudWatch after each one: capacity can only be decreased a few times a day."
     );
     Some(finish(f, savings, SavingsBasis::PublicPrice, Some(PriceSource::BuiltIn)))
 }
@@ -1024,6 +1026,11 @@ mod tests {
         let items = platform_monthly(&r("t", json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0})))
             .unwrap();
         assert!((items - 0.25).abs() < 1e-9);
+        // 48 more in a global table.
+        let global = platform_monthly(&r("t", json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0,
+            "replica_regions": ["eu-west-1"]})))
+        .unwrap();
+        assert!((global - 0.25 * 1.48).abs() < 1e-9);
         // Unknown size: no price rather than $0.
         assert_eq!(platform_monthly(&r("t", json!({}))), None);
     }
