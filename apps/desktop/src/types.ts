@@ -340,6 +340,7 @@ export interface Insights {
   commitments: [string, CommitmentSummary][];
   /** How much of the inventory was made as code. */
   iac: IacSummary;
+  tags: TagCoverage;
   unit: string;
 }
 
@@ -368,6 +369,16 @@ export interface IacSummary {
   by_tool: { tool: IacTool; label: string; resources: number; certain: number }[];
   unmanaged: number;
   unmanaged_by_type: { resource_type: string; label: string; count: number }[];
+}
+
+export interface TagCoverage {
+  /** Resources that can carry tags (network plumbing, snapshots and log groups excluded). */
+  total: number;
+  /** With at least one tag of your own (`aws:` tags and `Name` don't count). */
+  tagged: number;
+  /** Per cost allocation tag key from Settings: resources carrying it. */
+  by_key: [string, number][];
+  untagged_by_type: { resource_type: string; label: string; count: number }[];
 }
 
 export type ProviderKind = "none" | "open_ai_compatible" | "anthropic" | "bedrock";

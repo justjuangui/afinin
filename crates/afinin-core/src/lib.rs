@@ -929,6 +929,9 @@ impl Afinin {
         };
         // Before `db` below: it holds the lock for the rest of the function.
         let iac = self.iac_coverage(workspace_id)?;
+        let tag_keys = self.settings()?.cost_tag_keys;
+        let (resources, _) = self.db().workspace_inventory(workspace_id)?;
+        let tags = inventory::graph::tag_coverage(&resources, &tag_keys);
         let db = self.db();
         let mut top_movers =
             db.compare_costs(&query(GroupBy::Service, d(-30), d(0)), &d(-60), &d(-30))?;
@@ -968,6 +971,7 @@ impl Afinin {
                 .sum(),
             commitments,
             iac,
+            tags,
             unit: usage.unit,
         })
     }
@@ -1465,6 +1469,8 @@ pub struct Insights {
     pub commitments: Vec<(String, findings::commitments::CommitmentSummary)>,
     /// How much of the inventory was made as code.
     pub iac: inventory::iac::IacSummary,
+    /// How much of the inventory carries tags.
+    pub tags: inventory::graph::TagCoverage,
     pub unit: String,
 }
 

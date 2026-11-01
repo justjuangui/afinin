@@ -323,6 +323,8 @@ pub struct Collected {
     /// CloudFormation stacks; their members are annotated once all regions
     /// are merged (a stack in one region can manage an S3 bucket listed globally).
     pub stacks: Vec<collect::cloudformation::Stack>,
+    /// CloudWatch metrics requested (billed per 1,000), per call.
+    pub metric_calls: Vec<usize>,
 }
 
 impl Collected {
@@ -332,6 +334,7 @@ impl Collected {
         self.warnings.extend(other.warnings);
         self.tags_by_arn.extend(other.tags_by_arn);
         self.stacks.extend(other.stacks);
+        self.metric_calls.extend(other.metric_calls);
     }
 
     /// Marks resources that a stack manages (see [`iac`]). A physical ID is

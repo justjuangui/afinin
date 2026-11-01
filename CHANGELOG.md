@@ -39,6 +39,12 @@ First feature-complete version (MVP, milestones M0–M6).
   the graph; and, with the opt-in CloudWatch usage setting, findings for unused and
   over-provisioned tables. The IAM policies gain `dynamodb:DescribeContinuousBackups`,
   `application-autoscaling:DescribeScalableTargets` and `cloudwatch:GetMetricData`.
+- **Previous-generation types**: running EC2 instances, RDS databases and ElastiCache nodes on old
+  families (t2, m4, c4, r4, db.t2, cache.r4…) are flagged with the current family to move to.
+- **Tag coverage**: share of taggable resources with a tag of your own, per cost allocation tag
+  key, and the untagged ones by type (Findings → Insights).
+- **Own AWS costs**: CloudWatch usage metric calls are counted with Cost Explorer and S3 requests.
+- **Cost chart**: the tooltip highlights the service under the pointer.
 - **Infrastructure as code**: which tool made each resource (CloudFormation, CDK, SAM, Serverless,
   Beanstalk, Copilot, Amplify, Terraform, Pulumi) from stacks, tags and generated names, with
   confidence and evidence; "Managed by" graph filter, coverage card in Findings, assistant tool. The

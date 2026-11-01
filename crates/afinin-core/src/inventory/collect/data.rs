@@ -120,6 +120,9 @@ pub async fn rds(ctx: &Ctx<'_>) -> Result<Collected> {
     Ok(out)
 }
 
+/// CloudWatch GetMetricData, per metric requested.
+pub const METRIC_COST_USD: f64 = 0.01 / 1000.0;
+
 /// Days of CloudWatch capacity metrics read for provisioned tables.
 pub const DYNAMODB_METRIC_DAYS: i64 = 14;
 
@@ -257,7 +260,7 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
         .map(|r| r.native_id.clone())
         .collect();
     if ctx.usage_metrics && !provisioned.is_empty() {
-        match consumed_capacity(ctx, &provisioned).await {
+        match consumed_capacity(ctx, &provisioned, &mut out.metric_calls).await {
             Ok(usage) => {
                 for r in &mut out.resources {
                     // A table whose metrics failed is unknown, not unused.
@@ -320,10 +323,12 @@ const METRIC_PERIOD: i64 = 60;
 
 /// Capacity each table consumed over the last [`DYNAMODB_METRIC_DAYS`],
 /// minute by minute. Indexes have metrics of their own and aren't
-/// included. A table without data points consumed nothing.
+/// included. A table without data points consumed nothing. Every call made,
+/// paginated ones included, goes to `calls` with the metrics it requested.
 async fn consumed_capacity(
     ctx: &Ctx<'_>,
     tables: &[String],
+    calls: &mut Vec<usize>,
 ) -> Result<HashMap<String, Consumed>> {
     use aws_sdk_cloudwatch::types::{Dimension, Metric, MetricDataQuery, MetricStat};
     let client = aws_sdk_cloudwatch::Client::new(ctx.config);
@@ -371,6 +376,7 @@ async fn consumed_capacity(
             .try_collect()
             .await
             .map_err(aws_err)?;
+        calls.extend(std::iter::repeat_n(chunk.len() * 2, pages.len()));
         for m in pages.iter().flat_map(|p| p.metric_data_results()) {
             let Some(id) = m.id() else { continue };
             let (kind, i) = id.split_at(1);

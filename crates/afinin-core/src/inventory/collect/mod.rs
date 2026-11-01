@@ -7,7 +7,7 @@ mod apigateway;
 pub mod cloudformation;
 mod cloudfront;
 mod containers;
-mod data;
+pub(crate) mod data;
 mod ec2;
 mod elb;
 mod lambda;
