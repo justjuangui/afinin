@@ -108,9 +108,12 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
         T::DynamoDbTable => {
             const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
             // Backups cover the table and its local indexes; global indexes
-            // are stored, but not backed up, separately.
-            let table_gib =
-                (r.attrs.get("size_bytes")?.as_f64()? + num("local_index_size_bytes")) / GIB;
+            // are stored, but not backed up, separately. Each item is billed
+            // 100 bytes of overhead that the reported size leaves out.
+            let table_gib = (r.attrs.get("size_bytes")?.as_f64()?
+                + num("local_index_size_bytes")
+                + num("item_count") * 100.0)
+                / GIB;
             let gib = table_gib + num("index_size_bytes") / GIB;
             let ia = text("table_class") == Some("STANDARD_INFREQUENT_ACCESS");
             let storage = gib * if ia { builtin::DYNAMODB_IA_GB } else { builtin::DYNAMODB_GB };

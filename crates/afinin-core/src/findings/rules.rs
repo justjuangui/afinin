@@ -506,7 +506,12 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
     let (used_read, used_write) = (num_attr(r, "consumed_read_units")?, num_attr(r, "consumed_write_units")?);
     let (read_unit, write_unit) = dynamodb_unit_monthly(r);
     // The table's CUR cost includes storage, which stays: keep the estimate.
+    // Reads through a global index don't show in the table's metrics, so a
+    // table with one may be in use.
     if used_read == 0.0 && used_write == 0.0 {
+        if num_attr(r, "gsi_count").is_some_and(|n| n > 0.0) {
+            return None;
+        }
         let savings = read * read_unit + write * write_unit;
         if savings < DYNAMODB_MIN_SAVINGS {
             return None;
@@ -531,8 +536,8 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
     if r.attrs.get("autoscaling").and_then(|v| v.as_bool()) != Some(false) {
         return None;
     }
-    // Twice the busiest five minutes' average, as headroom; shorter spikes
-    // are what burst capacity absorbs.
+    // Twice the busiest minute's average, as headroom; spikes within a
+    // minute are what burst capacity absorbs.
     let target = |peak: f64| (peak * 2.0).ceil().max(1.0);
     let (peak_read, peak_write) = (
         num_attr(r, "peak_read_per_s").unwrap_or(0.0),
@@ -551,7 +556,7 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
         .evidence("metric_days", days);
     f.title = format!("DynamoDB table {} uses a fraction of its provisioned capacity", r.display_name());
     f.summary = format!(
-        "Its busiest five minutes in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
+        "Its busiest minute in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
          {read} read and {write} write units provisioned. Without auto scaling, unused capacity is billed every hour."
     );
     f.how_to_fix = format!(
@@ -967,7 +972,7 @@ mod tests {
             }
             r
         };
-        let used = |rr: f64, wr: f64| json!({"consumed_read_units": rr * 300.0, "consumed_write_units": wr * 300.0,
+        let used = |rr: f64, wr: f64| json!({"consumed_read_units": rr * 60.0, "consumed_write_units": wr * 60.0,
                                              "peak_read_per_s": rr, "peak_write_per_s": wr});
         let merge = |mut a: serde_json::Value, b: serde_json::Value| {
             a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
@@ -984,6 +989,8 @@ mod tests {
             // Too new to judge, no metrics, on-demand.
             r("t-new", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"create_time": "2026-10-10T00:00:00Z"}))),
             r("t-unknown", cap(100, 50)),
+            // Reads through a global index don't show in the table's metrics.
+            r("t-gsi", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"gsi_count": 1}))),
             r("t-ondemand", merge(merge(cap(0, 0), used(0.0, 0.0)), json!({"billing_mode": "PAY_PER_REQUEST"}))),
         ];
         let findings = run(&resources, &[], &HashMap::new(), None);
@@ -997,7 +1004,7 @@ mod tests {
             got,
             vec![
                 ("dynamodb-provisioned-unused", "t-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
-                // Keeps 20 reads and 80 writes: twice the busiest five minutes.
+                // Keeps 20 reads and 80 writes: twice the busiest minute.
                 ("dynamodb-overprovisioned", "t-over".to_owned(), round(980.0 * rcu + 20.0 * wcu)),
                 ("dynamodb-provisioned-unused", "t-scaled-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
             ]
@@ -1013,6 +1020,10 @@ mod tests {
         let ia = platform_monthly(&r("t", json!({"size_bytes": 10.0 * gib, "table_class": "STANDARD_INFREQUENT_ACCESS"})))
             .unwrap();
         assert!((ia - 10.0 * 0.10).abs() < 1e-9);
+        // 100 bytes of overhead per item.
+        let items = platform_monthly(&r("t", json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0})))
+            .unwrap();
+        assert!((items - 0.25).abs() < 1e-9);
         // Unknown size: no price rather than $0.
         assert_eq!(platform_monthly(&r("t", json!({}))), None);
     }

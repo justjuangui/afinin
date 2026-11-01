@@ -306,19 +306,20 @@ async fn autoscaled_tables(ctx: &Ctx<'_>) -> Result<HashSet<String>> {
 struct Consumed {
     read_total: f64,
     write_total: f64,
-    /// The busiest five minutes' average units per second.
+    /// The busiest minute's average units per second.
     read_peak: f64,
     write_peak: f64,
     /// A metric query came back with an error.
     failed: bool,
 }
 
-/// Seconds per data point: DynamoDB's burst capacity holds up to five
-/// minutes of unused capacity, so shorter spikes are absorbed by it.
-const METRIC_PERIOD: i64 = 300;
+/// Seconds per data point: DynamoDB publishes consumed capacity per minute
+/// (kept at this resolution for 15 days), and burst capacity absorbs spikes
+/// within a minute.
+const METRIC_PERIOD: i64 = 60;
 
 /// Capacity each table consumed over the last [`DYNAMODB_METRIC_DAYS`],
-/// five minutes at a time. Indexes have metrics of their own and aren't
+/// minute by minute. Indexes have metrics of their own and aren't
 /// included. A table without data points consumed nothing.
 async fn consumed_capacity(
     ctx: &Ctx<'_>,
