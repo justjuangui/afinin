@@ -47,7 +47,7 @@ jobs:
           for pair in "Cargo.toml:$cargo" "apps/desktop/package.json:$npm" "apps/desktop/src-tauri/tauri.conf.json:$tauri"; do
             [ "${pair#*:}" = "$VERSION" ] || fail "${pair%%:*} has version ${pair#*:}, not $VERSION."
           done
-          grep -E "^## (.*[^0-9.])?${VERSION//./\\.}([^0-9.]|$)" CHANGELOG.md | grep -vqi unreleased \
+          grep -E "^## (.*[^0-9.])?${VERSION//./\\.}([^0-9A-Za-z.-]|$)" CHANGELOG.md | grep -vqi unreleased \
             || fail "CHANGELOG.md has no released heading for $VERSION (e.g. \"## v$VERSION — 2026-11-02\")."
           if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
             fail "Tag v$VERSION already exists. Bump the version, or delete the tag and its draft release first."

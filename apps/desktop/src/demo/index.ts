@@ -48,10 +48,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return data.dimensionValues(g.kind, g.kind === "tag" ? g.key : undefined);
   },
 
-  inventory_graph: (a) => {
-    const f = a.filter as GraphFilter;
-    return data.graph(f.accounts, f.types);
-  },
+  inventory_graph: (a) => data.graph(a.filter as GraphFilter),
   inventory_facets: () => data.facets(),
   tag_values: (a) =>
     a.key === "env"

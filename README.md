@@ -19,8 +19,9 @@ The AWS console tells you what you spent. Afinín tells you **why**, and **what 
   change anything in your accounts.
 - **Your data stays on your machine.** Costs, inventory and findings live in an encrypted
   local database, with the key in your OS keychain. No Afinín server, no account, no telemetry.
-- **Cheap to run.** Cost Explorer charges $0.01 per request: a daily sync costs a few cents a
-  month, and Settings shows exactly what Afinín has cost you.
+- **Cheap to run.** Cost Explorer charges $0.01 per request, and a sync makes about six per
+  account: around $2 a month per account with the default daily sync. Settings shows exactly
+  what Afinín has cost you.
 - **Every account in one place.** Group accounts into workspaces and see them together,
   through IAM Identity Center, CLI profiles or assume-role chains.
 - **AI that shows its work, or none at all.** The assistant is optional. When you use it,
