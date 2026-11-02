@@ -554,11 +554,18 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
         "{kind} is a previous generation. The current {next} family costs the same or less per hour for the same \
          size, with faster processors and networking."
     );
+    // These old families have local instance-store disks; the new ones don't.
+    let local = if ["m1.", "m2.", "m3.", "c1.", "c3.", "r3."].iter().any(|p| kind.starts_with(p)) {
+        " First copy anything kept on its local instance-store disks to EBS or S3: stopping the instance \
+         erases them, and the new type has none."
+    } else {
+        ""
+    };
     f.how_to_fix = match r.resource_type {
         T::Ec2Instance => format!(
             "Stop the instance, change its type to {target} (Actions → Instance settings → Change instance type) \
              and start it again, in a maintenance window. Check the AMI supports the newer family (ENA and NVMe \
-             drivers); Graviton types are cheaper still if your software runs on ARM."
+             drivers); Graviton types are cheaper still if your software runs on ARM.{local}"
         ),
         T::RdsInstance => format!(
             "Modify the instance class to {target} (or a Graviton class) in the RDS console, during the next \
@@ -566,7 +573,8 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
         ),
         _ => format!(
             "Change the node type to {target} in the ElastiCache console (Modify); it's applied online for Redis \
-             and Valkey. Check your engine version supports it."
+             and Valkey. Check your engine version supports it, and compare memory: the same size can hold less \
+             data on the new family, so pick a larger one if the cache is near full."
         ),
     };
     Some(f)
@@ -1091,6 +1099,8 @@ mod tests {
         );
         assert!(!small[0].how_to_fix.contains("m7i.small"));
         assert!(small[0].how_to_fix.contains("m7i.large"));
+        assert!(small[0].how_to_fix.contains("instance-store"), "m1 has local disks");
+        assert!(!findings[0].how_to_fix.contains("instance-store"), "m4 is EBS-only");
     }
 
     #[test]
