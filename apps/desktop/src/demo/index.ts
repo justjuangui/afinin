@@ -4,10 +4,12 @@
 // never part of a release build.
 
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { CostQuery, GraphFilter, GroupBy } from "../types";
+import type { CostQuery, FindingStatus, GraphFilter, GroupBy } from "../types";
 import * as data from "./data";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const statuses = new Map<string, FindingStatus>();
 
 type Args = Record<string, unknown>;
 
@@ -75,8 +77,15 @@ const handlers: Record<string, (a: Args) => unknown> = {
       warnings: [],
     })),
 
-  findings: () => data.FINDINGS,
-  set_finding_status: () => null,
+  // Dismissed and snoozed findings stay hidden until the page reloads.
+  findings: (a) =>
+    data.FINDINGS.map((f) => ({ ...f, status: statuses.get(f.id) ?? f.status })).filter(
+      (f) => a.includeHidden || f.status.status === "open",
+    ),
+  set_finding_status: (a) => {
+    statuses.set(a.findingId as string, a.status as FindingStatus);
+    return null;
+  },
   insights: () => data.insights(),
 
   workspace_context: () => ({

@@ -25,8 +25,9 @@ The AWS console tells you what you spent. Afinín tells you **why**, and **what 
 - **Every account in one place.** Group accounts into workspaces and see them together,
   through IAM Identity Center, CLI profiles or assume-role chains.
 - **AI that shows its work, or none at all.** The assistant is optional. When you use it,
-  numbers come from Afinín's own queries, never from the model; each answer cites its sources;
-  and account IDs, ARNs and IPs are masked before anything leaves your machine.
+  the model gets its numbers from Afinín's own queries, each answer cites them, and any figure
+  that matches none of them is flagged as unverified. Account IDs, ARNs and IPs are masked before
+  anything leaves your machine.
 - **Open source**, MIT or Apache-2.0.
 
 ## What it does
