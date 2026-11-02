@@ -44,16 +44,17 @@ export function CostChart({ periods, series, granularity, unit, estimatedPeriods
     chart.current = instance;
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(el.current);
-    // The axis tooltip doesn't know which segment the pointer is on: track
-    // it and redraw the tooltip when it changes within the same bar.
-    instance.on("mouseover", (e) => {
-      const p = e as { seriesName?: string; seriesIndex?: number; dataIndex?: number };
-      hovered.current = p.seriesName ?? null;
-      instance.dispatchAction({ type: "showTip", seriesIndex: p.seriesIndex, dataIndex: p.dataIndex });
-    });
-    instance.on("mouseout", () => {
-      hovered.current = null;
-    });
+    // The axis tooltip doesn't know which segment the pointer is on, and
+    // ECharts reuses its content while the pointer stays on one bar: track
+    // the segment and mark its row in the tooltip that is showing.
+    const mark = (name: string | null) => {
+      hovered.current = name;
+      el.current?.querySelectorAll<HTMLElement>(".tt-row").forEach((row) => {
+        row.classList.toggle("tt-row-active", name !== null && row.dataset.series === name);
+      });
+    };
+    instance.on("mouseover", (e) => mark((e as { seriesName?: string }).seriesName ?? null));
+    instance.on("mouseout", () => mark(null));
     return () => {
       observer.disconnect();
       instance.dispose();
@@ -100,7 +101,8 @@ export function CostChart({ periods, series, granularity, unit, estimatedPeriods
               .sort((a, b) => b.value - a.value)
               .map(
                 (p) =>
-                  `<div class="tt-row${p.seriesName === hovered.current ? " tt-row-active" : ""}">` +
+                  `<div class="tt-row${p.seriesName === hovered.current ? " tt-row-active" : ""}" ` +
+                  `data-series="${escapeHtml(p.seriesName)}">` +
                   `<span class="tt-swatch" style="background:${p.color}"></span>` +
                   `<span class="tt-label">${escapeHtml(p.seriesName)}</span><span class="tt-value">${money(p.value, unit)}</span></div>`,
               )
