@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v0.1.0
+## v0.1.0 — 2026-11-02
 
 First feature-complete version (MVP, milestones M0–M6).
 
