@@ -1,9 +1,10 @@
 # Releasing Afinín
 
-Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed. It produces
-installers for macOS (Apple Silicon and Intel), Linux (AppImage, .deb, .rpm) and Windows
-(MSI, NSIS), a signed update manifest (`latest.json`) and CycloneDX SBOMs, all attached to a
-**draft** GitHub release. Publish the draft after checking it.
+Releases are built by `.github/workflows/release.yml`, and only when you start it by hand:
+nothing else (pushes, tags, pull requests) triggers it. It produces installers for macOS (Apple
+Silicon and Intel), Linux (AppImage, .deb, .rpm) and Windows (MSI, NSIS), a signed update
+manifest (`latest.json`) and CycloneDX SBOMs, all attached to a **draft** GitHub release.
+Publish the draft after checking it.
 
 ## One-time setup
 
@@ -41,19 +42,23 @@ Configure `bundle.windows` signing per <https://v2.tauri.app/distribute/sign/win
 
 ## Cutting a release
 
-1. Update the version in `Cargo.toml` (`[workspace.package]`), `apps/desktop/package.json`
-   and `apps/desktop/src-tauri/tauri.conf.json`.
-2. Add the changes to `CHANGELOG.md`.
-3. Commit with sign-off, tag and push:
+1. On a branch, set the version in `Cargo.toml` (`[workspace.package]`),
+   `apps/desktop/package.json` and `apps/desktop/src-tauri/tauri.conf.json`, and give the
+   changes a dated heading in `CHANGELOG.md`, e.g. `## v0.1.0 — 2026-11-02` (a heading that
+   still says "Unreleased" is refused). Merge it into `main` and wait for CI to pass.
+2. In GitHub: **Actions → Release → Run workflow**, on `main`, with the version (`0.1.0`,
+   without the `v`).
 
-   ```sh
-   git commit -s -am "release: v0.2.0"
-   git tag -s v0.2.0 -m "Afinín v0.2.0"
-   git push origin main v0.2.0
-   ```
+   The workflow first checks that the version matches all three files and the CHANGELOG, that
+   CI passed on that commit, and that the tag doesn't exist yet. Then it tags the commit
+   (`v0.1.0`), builds the four installers in parallel (about 20–30 minutes) and attaches the
+   SBOMs.
+3. Open the draft release, check the installers, `latest.json` and the SBOMs, edit the notes
+   if you like, and **Publish**. Installed apps find the update through
+   `releases/latest/download/latest.json` of this repository.
 
-4. Review the draft release (installers, `latest.json`, SBOMs) and publish it. Installed apps
-   find the update through `releases/latest/download/latest.json`.
+If a build fails, delete the draft release and the tag (`git push origin :refs/tags/v0.1.0`),
+fix the cause on `main`, and run the workflow again.
 
 ## Local builds
 

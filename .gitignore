@@ -21,3 +21,4 @@ apps/desktop/src-tauri/gen/
 .vscode/*
 !.vscode/extensions.json
 .DS_Store
+.playwright-mcp/

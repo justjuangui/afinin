@@ -2,31 +2,89 @@
 
 > *Tune your AWS spend. See where the money goes, locally and safely.*
 
-Afinín (from *afinar*, to tune an instrument) is a local, cross-platform desktop app that
-connects **read-only** to your AWS accounts, shows where the money goes and how your
-services connect, and flags waste and anomalies — with any LLM or none.
+Afinín (from *afinar*, to tune an instrument) is a desktop app for macOS, Windows and Linux. It
+connects **read-only** to your AWS accounts, shows where the money goes and how your services
+connect, and points at what to fix, with an optional AI assistant that works with any LLM.
 
-Status: **v0.1.0 (MVP), not yet released.** See [`CHANGELOG.md`](CHANGELOG.md) and the
-[requirements](requirement.md).
+![Costs by service over the last 30 days](docs/images/costs.png)
+
+*Screens show Brightlane, a fictional company (demo mode, sample data).*
+
+## Why try it
+
+The AWS console tells you what you spent. Afinín tells you **why**, and **what to do about it**.
+
+- **Read-only, by design.** Afinín asks for list, describe and get permissions only. The code
+  contains no AWS write call, and CI checks this on every change. It can't stop, delete or
+  change anything in your accounts.
+- **Your data stays on your machine.** Costs, inventory and findings live in an encrypted
+  local database, with the key in your OS keychain. No Afinín server, no account, no telemetry.
+- **Cheap to run.** Cost Explorer charges $0.01 per request: a daily sync costs a few cents a
+  month, and Settings shows exactly what Afinín has cost you.
+- **Every account in one place.** Group accounts into workspaces and see them together,
+  through IAM Identity Center, CLI profiles or assume-role chains.
+- **AI that shows its work, or none at all.** The assistant is optional. When you use it,
+  numbers come from Afinín's own queries, never from the model; each answer cites its sources;
+  and account IDs, ARNs and IPs are masked before anything leaves your machine.
+- **Open source**, MIT or Apache-2.0.
 
 ## What it does
 
-- **Where the money goes**: month to date, forecast, month-over-month; breakdowns by account,
-  service, region, usage type, tag and (with CUR 2.0) individual resource; period comparisons;
-  CSV export.
-- **What you have and how it connects**: resources across every enabled region, inferred
-  relationships (load balancer → targets → volumes, event sources, CloudFront origins…) on an
-  interactive graph with a cost overlay and tag-based applications.
-- **What to look at**: waste with estimated savings (unattached volumes, idle IPs, load
-  balancers and NAT gateways, stopped instances, old snapshots), cost anomalies, top movers,
-  data transfer, Savings Plans / RI coverage.
-- **Optional assistant**: ask questions in plain language with a local model or a cloud
-  provider; answers cite Afinín's own figures and identifiers are masked before leaving your
-  machine. Teach it your business with a workspace context, check answers against references,
-  and see what each answer cost.
+### Where the money goes
 
-Read-only, local-first, no telemetry. See [docs/setup.md](docs/setup.md) and
-[docs/privacy.md](docs/privacy.md).
+Month to date, forecast and month-over-month at a glance. Break costs down by account,
+service, region, usage type or tag; compare two periods; export any view to CSV. Connect a
+CUR 2.0 export and costs go down to each resource.
+
+### What to fix, and what it saves
+
+![Findings with estimated monthly savings, top movers and data transfer](docs/images/findings.png)
+
+Waste rules, each with an estimated monthly saving and how to fix it:
+- unattached volumes, idle IPs, load balancers and NAT gateways;
+- stopped instances still paying for disks, and old snapshots;
+- over-provisioned DynamoDB tables, log groups that never expire;
+- unused secrets and keys, and previous-generation instance types.
+
+Next to them: cost anomalies against your own baseline, top movers, data transfer,
+Savings Plans and RI coverage, tag coverage, and how much of your infrastructure is managed
+as code.
+
+### What you have and how it connects
+
+![Resource graph with the cost overlay](docs/images/inventory.png)
+
+Resources across every enabled region, with the relationships between them inferred: CloudFront
+→ load balancer → targets → databases, queues → functions, and more. The cost overlay shows
+where the money sits; filter by account, region, VPC, type, tag or the IaC tool that made
+it (CloudFormation, CDK, Terraform…).
+
+![A resource's details: cost, connections and the CDK stack that made it](docs/images/inventory-detail.png)
+
+### Ask in plain language
+
+![The assistant explains a month's increase with a table and cited sources](docs/images/assistant.png)
+
+"Why did costs go up in October?", "What's connected to this database?", "What are my top
+savings?" The assistant answers from your synced data with a local model (Ollama, LM Studio)
+or a cloud provider (Anthropic, Amazon Bedrock, any OpenAI-compatible API). You can:
+- teach it your business (what each account and tag is for);
+- keep good answers as references, and re-check them later;
+- see each answer's trace, tokens and cost.
+
+## Get started
+
+1. Download the installer for your system from
+   [Releases](https://github.com/justjuangui/afinin/releases/latest).
+2. Give Afinín read-only access: deploy the ready-made IAM role
+   ([policies/](policies/): CloudFormation StackSet, Terraform or plain JSON), or use an
+   existing profile.
+3. Add the account, sync, and read [docs/setup.md](docs/setup.md) for CUR, the assistant
+   and the optional settings. [docs/privacy.md](docs/privacy.md) says what is stored and
+   what is sent where.
+
+Want to look around first, without AWS? Run demo mode (see [Development](#development)):
+the real app with Brightlane's sample data.
 
 ## Repository layout
 
@@ -51,7 +109,12 @@ cargo test -p afinin-core          # core library tests
 cd apps/desktop
 npm install
 npm run tauri dev                  # run the desktop app
+npm run demo                       # the UI in a browser with sample data, no AWS or backend
 ```
+
+Demo mode (`src/demo/`) replaces the Tauri backend with Brightlane's sample data. It's how the
+screenshots in `docs/images/` are made: open <http://localhost:1420> at 1440×900 in dark mode
+and capture each screen. It is never part of a release build.
 
 Policy checks:
 
