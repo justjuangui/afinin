@@ -1,21 +1,81 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Signed installers for macOS, Linux and Windows, the signed update manifest
-# and SBOMs (NFR-6). Push a tag like `v0.2.0` to create a draft release.
-# Required secrets are listed in RELEASING.md.
+# and SBOMs (NFR-6), attached to a draft GitHub release. Run it by hand:
+# Actions → Release → Run workflow, with the version to release. Nothing else
+# starts it. Required secrets and the steps around it are in RELEASING.md.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (must match Cargo.toml, package.json, tauri.conf.json and a CHANGELOG heading)"
+        required: true
+        type: string
 
 permissions:
   contents: write
+  actions: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Check and tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$GITHUB_REF" = "refs/heads/main" ] || fail "Run the release from main (this run is on $GITHUB_REF)."
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "\"$VERSION\" is not a version like 0.1.0 (without the v)."
+          cargo=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml)
+          npm=$(node -p 'require("./apps/desktop/package.json").version')
+          tauri=$(node -p 'require("./apps/desktop/src-tauri/tauri.conf.json").version')
+          for pair in "Cargo.toml:$cargo" "apps/desktop/package.json:$npm" "apps/desktop/src-tauri/tauri.conf.json:$tauri"; do
+            [ "${pair#*:}" = "$VERSION" ] || fail "${pair%%:*} has version ${pair#*:}, not $VERSION."
+          done
+          grep -E "^## (.*[^0-9.])?${VERSION//./\\.}([^0-9.]|$)" CHANGELOG.md | grep -vqi unreleased \
+            || fail "CHANGELOG.md has no released heading for $VERSION (e.g. \"## v$VERSION — 2026-11-02\")."
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            fail "Tag v$VERSION already exists. Bump the version, or delete the tag and its draft release first."
+          fi
+
+      - name: CI passed on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          result=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --json conclusion --jq 'map(.conclusion) | if any(. == "success") then "success" else (.[0] // "none") end')
+          [ "$result" = "success" ] || { echo "::error::CI has not passed on $GITHUB_SHA (latest: $result). Wait for it, or fix main first."; exit 1; }
+
+      - name: Tag
+        id: tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Afinín v$VERSION"
+          git push origin "v$VERSION"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.target }})
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +91,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Linux system dependencies
         if: runner.os == 'Linux'
@@ -50,13 +112,20 @@ jobs:
       - run: npm ci
         working-directory: apps/desktop
 
-      - name: Inject update public key
+      # Installed apps look for updates in the repository that published them.
+      - name: Inject the update key and address
         shell: bash
         env:
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: |
-          test -n "$TAURI_UPDATER_PUBKEY" || { echo "Set the TAURI_UPDATER_PUBKEY repository variable (see RELEASING.md)"; exit 1; }
-          node -e 'const f="apps/desktop/src-tauri/tauri.release.conf.json";const c=require("./"+f);c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBKEY;require("fs").writeFileSync(f,JSON.stringify(c,null,2))'
+          test -n "$TAURI_UPDATER_PUBKEY" || { echo "::error::Set the TAURI_UPDATER_PUBKEY repository variable (see RELEASING.md)"; exit 1; }
+          node -e '
+            const f = "apps/desktop/src-tauri/tauri.release.conf.json";
+            const c = require("./" + f);
+            c.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBKEY;
+            c.plugins.updater.endpoints = [`https://github.com/${process.env.GITHUB_REPOSITORY}/releases/latest/download/latest.json`];
+            require("fs").writeFileSync(f, JSON.stringify(c, null, 2));
+          '
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -72,8 +141,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: Afinín ${{ github.ref_name }}
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: Afinín ${{ needs.prepare.outputs.tag }}
           releaseBody: See CHANGELOG.md. Verify downloads with the SBOMs and the update signatures.
           releaseDraft: true
           includeUpdaterJson: true
@@ -81,10 +150,12 @@ jobs:
 
   sbom:
     name: SBOM
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -102,4 +173,4 @@ jobs:
       - name: Attach to the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" afinin-rust.cdx.json afinin-npm.cdx.json --clobber
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" afinin-rust.cdx.json afinin-npm.cdx.json --clobber

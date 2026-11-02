@@ -45,6 +45,11 @@ First feature-complete version (MVP, milestones M0–M6).
   key, and the untagged ones by type (Findings → Insights).
 - **Own AWS costs**: CloudWatch usage metric calls are counted with Cost Explorer and S3 requests.
 - **Cost chart**: the tooltip highlights the service under the pointer.
+- **Releases**: built only when started by hand (Actions → Release → Run workflow, with the
+  version), after checking the version, the CHANGELOG and CI; installed apps look for updates in
+  the repository that published them.
+- **Demo mode** (`npm run demo`): the UI in a browser with a fictional company's data, used for
+  the README screenshots.
 - **Infrastructure as code**: which tool made each resource (CloudFormation, CDK, SAM, Serverless,
   Beanstalk, Copilot, Amplify, Terraform, Pulumi) from stacks, tags and generated names, with
   confidence and evidence; "Managed by" graph filter, coverage card in Findings, assistant tool. The
