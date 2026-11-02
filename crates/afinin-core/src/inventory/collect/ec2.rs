@@ -43,6 +43,8 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
             r.with_tags(tags(i.tags()))
                 .attr("state", state.map(Value::String))
                 .attr("instance_type", s(i.instance_type().map(|t| t.as_str())))
+                .attr("virtualization", s(i.virtualization_type().map(|v| v.as_str())))
+                .attr("architecture", s(i.architecture().map(|a| a.as_str())))
                 .attr("private_ip", s(i.private_ip_address()))
                 .attr("public_ip", s(i.public_ip_address()))
                 .attr("vpc_id", s(i.vpc_id()))

@@ -561,7 +561,22 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
     } else {
         ""
     };
+    // Paravirtual and 32-bit instances can't be moved to a current type:
+    // only a new instance from a current (HVM, 64-bit) AMI can.
+    let relaunch = str_attr(r, "virtualization") == Some("paravirtual") || str_attr(r, "architecture") == Some("i386");
+    let maybe_pv = ["t1.", "m1.", "m2.", "c1.", "m3.", "c3."].iter().any(|p| kind.starts_with(p));
     f.how_to_fix = match r.resource_type {
+        T::Ec2Instance if relaunch => format!(
+            "This instance runs a paravirtual or 32-bit image, which current types can't run, so its type can't \
+             simply be changed. Launch a new {target} instance from a current 64-bit AMI, move the workload and \
+             data, then terminate this one.{local}"
+        ),
+        T::Ec2Instance if maybe_pv && !r.attrs.contains_key("virtualization") => format!(
+            "Check the instance's virtualization type first (EC2 console → the instance → Details): if it's \
+             paravirtual or 32-bit, launch a new {target} instance from a current 64-bit AMI instead. Otherwise stop \
+             it, change its type to {target} (Actions → Instance settings → Change instance type) and start it \
+             again, in a maintenance window.{local}"
+        ),
         T::Ec2Instance => format!(
             "Stop the instance, change its type to {target} (Actions → Instance settings → Change instance type) \
              and start it again, in a maintenance window. Check the AMI supports the newer family (ENA and NVMe \
@@ -1100,6 +1115,17 @@ mod tests {
         assert!(!small[0].how_to_fix.contains("m7i.small"));
         assert!(small[0].how_to_fix.contains("m7i.large"));
         assert!(small[0].how_to_fix.contains("instance-store"), "m1 has local disks");
+        // Unknown virtualization on a PV-era family: check first.
+        assert!(small[0].how_to_fix.contains("virtualization type"));
+        let pv = run(
+            &[r(T::Ec2Instance, "i-pv", json!({"instance_type": "t1.micro", "state": "running",
+                                                "virtualization": "paravirtual"}))],
+            &[],
+            &HashMap::new(),
+            None,
+        );
+        assert!(pv[0].how_to_fix.starts_with("This instance runs a paravirtual"));
+        assert!(!pv[0].how_to_fix.contains("Change instance type"));
         assert!(!findings[0].how_to_fix.contains("instance-store"), "m4 is EBS-only");
     }
 
