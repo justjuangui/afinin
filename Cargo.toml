@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["trompetin17 (juancarvajalsas)"]
-repository = "https://github.com/juancarvajalsas/afinin"
+repository = "https://github.com/justjuangui/afinin"
 rust-version = "1.90"
 
 [workspace.dependencies]
