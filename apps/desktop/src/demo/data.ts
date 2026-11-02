@@ -13,6 +13,7 @@ import type {
   Finding,
   Graph,
   GraphEdge,
+  GraphFilter,
   GraphNode,
   Insights,
   InventoryFacets,
@@ -202,8 +203,15 @@ export function costSeries(q: CostQuery): CostSeries {
         ? split.filter((x) => q.filter.linked_accounts.includes(x.key))
         : split;
     const norm = parts.reduce((s, x) => s + x.share, 0);
+    // Wobble each part, then rescale so every period still adds up to the
+    // same total as grouping by service.
+    const raw = parts.map((x, gi) => totals.map((t, pi) => t * (x.share / norm) * wobble(gi * 31 + pi)));
+    const scale = totals.map((t, pi) => {
+      const sum = raw.reduce((s, values) => s + values[pi], 0);
+      return sum ? t / sum : 0;
+    });
     groups = parts.map((x, gi) => {
-      const values = totals.map((t, pi) => t * (x.share / norm) * wobble(gi * 31 + pi));
+      const values = raw[gi].map((v, pi) => v * scale[pi]);
       return { key: x.key, label: x.label, values, total: values.reduce((a, b) => a + b, 0) };
     });
   }
@@ -412,10 +420,19 @@ const EDGES: GraphEdge[] = [
   E(N.worker, N.bucket, "routes_to"),
 ];
 
-export function graph(accounts: string[], types: string[]): Graph {
-  const nodes = Object.values(N).filter(
-    (n) => (!accounts.length || accounts.includes(n.account_id)) && (!types.length || types.includes(n.resource_type)),
-  );
+export function graph(f: GraphFilter): Graph {
+  const any = (list: string[], value: string) => !list.length || list.includes(value);
+  const nodes = Object.values(N).filter((n) => {
+    const tag = f.tag ? (n.tags[f.tag.key] ?? "") : null;
+    return (
+      any(f.accounts, n.account_id) &&
+      any(f.types, n.resource_type) &&
+      any(f.regions, n.region) &&
+      (!f.vpcs.length || (n.vpc_id !== null && f.vpcs.includes(n.vpc_id))) &&
+      any(f.managed_by, n.managed_by?.tool ?? "none") &&
+      (!f.tag || (f.tag.missing ? !tag : f.tag.value === null ? !!tag : tag === f.tag.value))
+    );
+  });
   const ids = new Set(nodes.map((n) => n.id));
   return {
     nodes,
