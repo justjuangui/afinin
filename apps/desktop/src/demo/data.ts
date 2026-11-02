@@ -205,7 +205,10 @@ export function costSeries(q: CostQuery): CostSeries {
     const norm = parts.reduce((s, x) => s + x.share, 0);
     // Wobble each part, then rescale so every period still adds up to the
     // same total as grouping by service.
-    const raw = parts.map((x, gi) => totals.map((t, pi) => t * (x.share / norm) * wobble(gi * 31 + pi)));
+    // Accounts keep their fixed shares, so grouping by account and filtering
+    // to one give the same figures.
+    const wob = (gi: number, pi: number) => (q.group_by.kind === "account" ? 1 : wobble(gi * 31 + pi));
+    const raw = parts.map((x, gi) => totals.map((t, pi) => t * (x.share / norm) * wob(gi, pi)));
     const scale = totals.map((t, pi) => {
       const sum = raw.reduce((s, values) => s + values[pi], 0);
       return sum ? t / sum : 0;
@@ -731,6 +734,6 @@ export const STORED_TURN: StoredTurn = {
   rating: "up",
   rating_note: null,
   reference: true,
-  expected: ["6.8%"],
+  expected: [],
   created_at: daysAgo(1),
 };

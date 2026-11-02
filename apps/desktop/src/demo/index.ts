@@ -100,6 +100,10 @@ const handlers: Record<string, (a: Args) => unknown> = {
   assistant_gaps: () => [],
   reference_turns: () => [data.STORED_TURN],
   llm_log: () => [],
+  rate_assistant_turn: () => null,
+  set_reference_turn: () => null,
+  set_reference_expected: (a) => a.expected,
+  reference_figures: () => [],
   ask: async () => {
     await wait(1200);
     return data.TURN;
@@ -110,10 +114,9 @@ mockIPC(
   async (cmd, payload) => {
     // Event plumbing (`listen`/`unlisten`) is handled by the mock itself.
     const handler = handlers[cmd];
-    if (!handler) {
-      console.warn(`[demo] no sample data for "${cmd}"`);
-      return null;
-    }
+    // Anything else fails like a backend error would, so screens show their
+    // usual error instead of reading a missing result.
+    if (!handler) throw `Not available in demo mode (${cmd}).`;
     return handler((payload ?? {}) as Args);
   },
   { shouldMockEvents: true },
