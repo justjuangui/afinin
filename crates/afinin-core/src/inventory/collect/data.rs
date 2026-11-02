@@ -370,13 +370,14 @@ async fn consumed_capacity(
                 );
             }
         }
-        let pages: Vec<_> = req
-            .into_paginator()
-            .send()
-            .try_collect()
-            .await
-            .map_err(aws_err)?;
-        calls.extend(std::iter::repeat_n(chunk.len() * 2, pages.len()));
+        // Each page is a billed call: count it as it arrives, so pages
+        // before a failed one are still counted.
+        let mut pages = Vec::new();
+        let mut stream = req.into_paginator().send();
+        while let Some(page) = stream.next().await {
+            pages.push(page.map_err(aws_err)?);
+            calls.push(chunk.len() * 2);
+        }
         for m in pages.iter().flat_map(|p| p.metric_data_results()) {
             let Some(id) = m.id() else { continue };
             let (kind, i) = id.split_at(1);

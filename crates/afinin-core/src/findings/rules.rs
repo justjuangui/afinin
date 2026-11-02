@@ -534,6 +534,16 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
         return None;
     }
     let size = kind.rsplit('.').next().unwrap_or_default();
+    // Burstable families come in every size; the others start at `large`
+    // and skip some old sizes (m4.10xlarge has no m7i twin).
+    const SIZES: &[&str] = &["large", "xlarge", "2xlarge", "4xlarge", "8xlarge", "12xlarge", "16xlarge", "24xlarge"];
+    let target = if next.ends_with("t3") || SIZES.contains(&size) {
+        format!("{next}.{size}")
+    } else if matches!(size, "nano" | "micro" | "small" | "medium") {
+        format!("{next}.large (its smallest size), or a burstable t3 type if that fits the load")
+    } else {
+        format!("the {next} size closest to {size}")
+    };
     let mut f = base("old-generation-type", r)
         .evidence(key, kind)
         .evidence("current_generation", *next)
@@ -546,16 +556,16 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
     );
     f.how_to_fix = match r.resource_type {
         T::Ec2Instance => format!(
-            "Stop the instance, change its type to {next}.{size} (Actions → Instance settings → Change instance type) \
+            "Stop the instance, change its type to {target} (Actions → Instance settings → Change instance type) \
              and start it again, in a maintenance window. Check the AMI supports the newer family (ENA and NVMe \
              drivers); Graviton types are cheaper still if your software runs on ARM."
         ),
         T::RdsInstance => format!(
-            "Modify the instance class to {next}.{size} (or a Graviton class) in the RDS console, during the next \
+            "Modify the instance class to {target} (or a Graviton class) in the RDS console, during the next \
              maintenance window or right away. Check your engine version supports it; Multi-AZ keeps the downtime short."
         ),
         _ => format!(
-            "Change the node type to {next}.{size} in the ElastiCache console (Modify); it's applied online for Redis \
+            "Change the node type to {target} in the ElastiCache console (Modify); it's applied online for Redis \
              and Valkey. Check your engine version supports it."
         ),
     };
@@ -1071,6 +1081,16 @@ mod tests {
         );
         assert!(findings.iter().all(|f| f.monthly_savings.is_none()));
         assert!(findings[0].how_to_fix.contains("m7i.large"));
+        assert!(findings[1].how_to_fix.contains("db.t3.micro"));
+        // No m7i.small: the family starts at large.
+        let small = run(
+            &[r(T::Ec2Instance, "i-small", json!({"instance_type": "m1.small", "state": "running"}))],
+            &[],
+            &HashMap::new(),
+            None,
+        );
+        assert!(!small[0].how_to_fix.contains("m7i.small"));
+        assert!(small[0].how_to_fix.contains("m7i.large"));
     }
 
     #[test]
