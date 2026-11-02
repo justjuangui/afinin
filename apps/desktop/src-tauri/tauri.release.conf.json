@@ -6,7 +6,7 @@
   "plugins": {
     "updater": {
       "pubkey": "SET_BY_RELEASE_WORKFLOW",
-      "endpoints": ["https://github.com/juancarvajalsas/afinin/releases/latest/download/latest.json"]
+      "endpoints": ["https://github.com/justjuangui/afinin/releases/latest/download/latest.json"]
     }
   }
 }

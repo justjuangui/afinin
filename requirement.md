@@ -28,7 +28,7 @@ The app is **read-only**: it analyzes and recommends; users act in the console o
 
 | Topic | Decision |
 |---|---|
-| Name | **Afinín** (written `afinin` in code, package names, binaries and repo: `juancarvajalsas/afinin`) |
+| Name | **Afinín** (written `afinin` in code, package names, binaries and repo: `justjuangui/afinin`) |
 | Distribution | Fully open source, dual-licensed **MIT OR Apache-2.0** (Rust ecosystem convention; maximum adoption, attribution required) |
 | Form factor | Desktop GUI with **Tauri** (Rust core + web UI) |
 | Frontend | **React + TypeScript** for the whole UI |
@@ -215,7 +215,7 @@ Exact policy JSON to be published in `/policies`.
 
 - Default anomaly sensitivity (baseline window and threshold) — tune with real data during M4.
 - Domain: `afinin.com` is listed for sale by a domain reseller; decide whether to buy it or use another domain (e.g. `afinin.dev`, or a GitHub Pages site).
-- Reserve the name: create `juancarvajalsas/afinin` and publish placeholder `afinin` packages on crates.io and npm.
+- Reserve the name: create `justjuangui/afinin` and publish placeholder `afinin` packages on crates.io and npm.
 
 ## 12. Resolved decisions log
 
