@@ -169,8 +169,17 @@ impl Storage {
             ))
         })?;
         rows.map(|row| {
-            let (id, question, screen, doc, rating, rating_note, is_reference, created_at, expected) =
-                row?;
+            let (
+                id,
+                question,
+                screen,
+                doc,
+                rating,
+                rating_note,
+                is_reference,
+                created_at,
+                expected,
+            ) = row?;
             let invalid = |e: serde_json::Error| {
                 Error::Other(format!("stored assistant turn {id} is invalid: {e}"))
             };
@@ -417,7 +426,15 @@ mod tests {
         // Expected values: trimmed, no blanks or repeats, limited.
         assert!(refs[0].expected.is_empty());
         let stored = db
-            .set_expected(c2, &[" $1,234.56 ".into(), "".into(), "$1,234.56".into(), "EC2".into()])
+            .set_expected(
+                c2,
+                &[
+                    " $1,234.56 ".into(),
+                    "".into(),
+                    "$1,234.56".into(),
+                    "EC2".into(),
+                ],
+            )
             .unwrap();
         assert_eq!(stored, ["$1,234.56", "EC2"]);
         assert_eq!(db.assistant_turn(c2).unwrap().expected, stored);

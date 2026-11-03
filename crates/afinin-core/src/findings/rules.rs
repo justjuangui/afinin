@@ -7,7 +7,8 @@ use std::collections::{HashMap, HashSet};
 use time::Date;
 
 use super::pricing::{
-    HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource, builtin, dynamodb_unit_monthly, platform_monthly,
+    HOURS_PER_MONTH, PriceBook, PriceItem, PriceSource, builtin, dynamodb_unit_monthly,
+    platform_monthly,
 };
 use super::{Finding, FindingKind, FindingResource, SavingsBasis, Severity};
 use crate::cost::dates;
@@ -233,10 +234,17 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
             {
                 let (savings, basis) = input.savings(r, builtin::SECRET);
                 let mut f = base("secret-unused", r)
-                    .evidence("last_accessed", str_attr(r, "last_accessed").unwrap_or("never"))
+                    .evidence(
+                        "last_accessed",
+                        str_attr(r, "last_accessed").unwrap_or("never"),
+                    )
                     .evidence("created", str_attr(r, "created"));
-                f.title = format!("Secret {} hasn't been read in {IDLE_DAYS}+ days", r.display_name());
-                f.summary = "Each secret is billed every month whether anything reads it or not.".into();
+                f.title = format!(
+                    "Secret {} hasn't been read in {IDLE_DAYS}+ days",
+                    r.display_name()
+                );
+                f.summary =
+                    "Each secret is billed every month whether anything reads it or not.".into();
                 f.how_to_fix = "Check that no application, pipeline or person still needs it (search your code and \
                                 configuration for its name). Then delete it in the Secrets Manager console: deletion \
                                 waits 7–30 days, during which you can restore it."
@@ -260,17 +268,25 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                 if num_attr(r, "size_gib").is_some_and(|g| g >= 0.1)
                     && match age_days(r, "last_pulled", input.today) {
                         Some(days) => days > IDLE_DAYS,
-                        None => age_days(r, "last_pushed", input.today).is_some_and(|d| d > IDLE_DAYS),
+                        None => {
+                            age_days(r, "last_pushed", input.today).is_some_and(|d| d > IDLE_DAYS)
+                        }
                     }
                     && age_days(r, "last_pushed", input.today).is_none_or(|d| d > IDLE_DAYS) =>
             {
                 let gib = num_attr(r, "size_gib").unwrap_or(0.0);
                 let (savings, basis) = input.savings(r, gib * builtin::ECR_GB);
                 let mut f = base("ecr-repository-idle", r)
-                    .evidence("last_pulled", str_attr(r, "last_pulled").unwrap_or("never recorded"))
+                    .evidence(
+                        "last_pulled",
+                        str_attr(r, "last_pulled").unwrap_or("never recorded"),
+                    )
                     .evidence("last_pushed", str_attr(r, "last_pushed"))
                     .evidence("size_gib", gib);
-                f.title = format!("ECR repository {} hasn't been used in {IDLE_DAYS}+ days", r.display_name());
+                f.title = format!(
+                    "ECR repository {} hasn't been used in {IDLE_DAYS}+ days",
+                    r.display_name()
+                );
                 f.summary = "No image was pulled or pushed recently, but all of them are still stored and billed. \
                              Shared layers are counted once per image, so the saving is an upper bound."
                     .into();
@@ -324,10 +340,14 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
             T::EfsFileSystem
                 if num_attr(r, "mount_targets") == Some(0.0)
                     && str_attr(r, "state") == Some("available")
-                    && r.attrs.get("replication_destination").and_then(|v| v.as_bool()) != Some(true) =>
+                    && r.attrs
+                        .get("replication_destination")
+                        .and_then(|v| v.as_bool())
+                        != Some(true) =>
             {
                 let (savings, basis) = input.savings(r, platform_monthly(r).unwrap_or(0.0));
-                let mut f = base("efs-no-mount-targets", r).evidence("size_gib", num_attr(r, "size_gib"));
+                let mut f =
+                    base("efs-no-mount-targets", r).evidence("size_gib", num_attr(r, "size_gib"));
                 f.title = format!("EFS file system {} has no mount targets", r.display_name());
                 f.summary = "Without a mount target no instance, container or function can use it, but its storage \
                              is still billed."
@@ -343,7 +363,8 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                     && str_attr(r, "linked_service").is_none() =>
             {
                 let (savings, basis) = input.savings(r, builtin::ROUTE53_ZONE);
-                let mut f = base("route53-zone-empty", r).evidence("record_sets", num_attr(r, "record_sets"));
+                let mut f = base("route53-zone-empty", r)
+                    .evidence("record_sets", num_attr(r, "record_sets"));
                 f.title = format!("Hosted zone {} has no records", r.display_name());
                 f.summary = "It holds only the NS and SOA records every zone starts with, but is billed monthly.".into();
                 f.how_to_fix = "If the domain isn't delegated to this zone or no longer used, delete the zone in the \
@@ -477,7 +498,9 @@ pub fn evaluate(input: &RuleInput) -> Vec<Finding> {
                 }
             }
             // After the stopped-instance rule, which takes stopped instances.
-            T::Ec2Instance | T::RdsInstance | T::ElastiCacheCluster => out.extend(old_generation(input, r)),
+            T::Ec2Instance | T::RdsInstance | T::ElastiCacheCluster => {
+                out.extend(old_generation(input, r))
+            }
             _ => {}
         }
     }
@@ -529,14 +552,18 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
         _ => ("node_type", str_attr(r, "status") == Some("available")),
     };
     let kind = str_attr(r, key)?;
-    let (_, next) = OLD_GENERATIONS.iter().find(|(old, _)| kind.starts_with(old))?;
+    let (_, next) = OLD_GENERATIONS
+        .iter()
+        .find(|(old, _)| kind.starts_with(old))?;
     if !running {
         return None;
     }
     let size = kind.rsplit('.').next().unwrap_or_default();
     // Burstable families come in every size; the others start at `large`
     // and skip some old sizes (m4.10xlarge has no m7i twin).
-    const SIZES: &[&str] = &["large", "xlarge", "2xlarge", "4xlarge", "8xlarge", "12xlarge", "16xlarge", "24xlarge"];
+    const SIZES: &[&str] = &[
+        "large", "xlarge", "2xlarge", "4xlarge", "8xlarge", "12xlarge", "16xlarge", "24xlarge",
+    ];
     let target = if next.ends_with("t3") || SIZES.contains(&size) {
         format!("{next}.{size}")
     } else if matches!(size, "nano" | "micro" | "small" | "medium") {
@@ -555,7 +582,10 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
          size, with faster processors and networking."
     );
     // These old families have local instance-store disks; the new ones don't.
-    let local = if ["m1.", "m2.", "m3.", "c1.", "c3.", "r3."].iter().any(|p| kind.starts_with(p)) {
+    let local = if ["m1.", "m2.", "m3.", "c1.", "c3.", "r3."]
+        .iter()
+        .any(|p| kind.starts_with(p))
+    {
         " First copy anything kept on its local instance-store disks to EBS or S3: stopping the instance \
          erases them, and the new type has none."
     } else {
@@ -563,8 +593,11 @@ fn old_generation(input: &RuleInput, r: &Resource) -> Option<Finding> {
     };
     // Paravirtual and 32-bit instances can't be moved to a current type:
     // only a new instance from a current (HVM, 64-bit) AMI can.
-    let relaunch = str_attr(r, "virtualization") == Some("paravirtual") || str_attr(r, "architecture") == Some("i386");
-    let maybe_pv = ["t1.", "m1.", "m2.", "c1.", "m3.", "c3."].iter().any(|p| kind.starts_with(p));
+    let relaunch = str_attr(r, "virtualization") == Some("paravirtual")
+        || str_attr(r, "architecture") == Some("i386");
+    let maybe_pv = ["t1.", "m1.", "m2.", "c1.", "m3.", "c3."]
+        .iter()
+        .any(|p| kind.starts_with(p));
     f.how_to_fix = match r.resource_type {
         T::Ec2Instance if relaunch => format!(
             "This instance runs a paravirtual or 32-bit image, which current types can't run, so its type can't \
@@ -603,7 +636,8 @@ const DYNAMODB_MIN_SAVINGS: f64 = 1.0;
 /// younger than that are skipped. Indexes have capacity and metrics of their
 /// own, which the estimate leaves out.
 fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
-    if str_attr(r, "billing_mode") != Some("PROVISIONED") || str_attr(r, "status") != Some("ACTIVE") {
+    if str_attr(r, "billing_mode") != Some("PROVISIONED") || str_attr(r, "status") != Some("ACTIVE")
+    {
         return None;
     }
     let days = num_attr(r, "metric_days")?;
@@ -614,7 +648,10 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
         num_attr(r, "read_capacity").unwrap_or(0.0),
         num_attr(r, "write_capacity").unwrap_or(0.0),
     );
-    let (used_read, used_write) = (num_attr(r, "consumed_read_units")?, num_attr(r, "consumed_write_units")?);
+    let (used_read, used_write) = (
+        num_attr(r, "consumed_read_units")?,
+        num_attr(r, "consumed_write_units")?,
+    );
     let (read_unit, write_unit) = dynamodb_unit_monthly(r);
     // The table's CUR cost includes storage, which stays: keep the estimate.
     // Reads through a global index don't show in the table's metrics, so a
@@ -632,7 +669,10 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
             .evidence("write_capacity", write)
             .evidence("metric_days", days)
             .evidence("item_count", num_attr(r, "item_count"));
-        f.title = format!("DynamoDB table {} had no reads or writes in {days} days", r.display_name());
+        f.title = format!(
+            "DynamoDB table {} had no reads or writes in {days} days",
+            r.display_name()
+        );
         f.summary = format!(
             "It has {read} read and {write} write capacity units provisioned, billed every hour whether used or not. \
              The account's free tier (25 of each per region) may cover part of it."
@@ -641,7 +681,12 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
                         Additional settings → Read/write capacity → Edit): an idle on-demand table costs only its storage. \
                         If it isn't, create a backup and delete the table."
             .into();
-        return Some(finish(f, savings, SavingsBasis::PublicPrice, Some(PriceSource::BuiltIn)));
+        return Some(finish(
+            f,
+            savings,
+            SavingsBasis::PublicPrice,
+            Some(PriceSource::BuiltIn),
+        ));
     }
     // Auto scaling already follows traffic.
     if r.attrs.get("autoscaling").and_then(|v| v.as_bool()) != Some(false) {
@@ -665,7 +710,10 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
         .evidence("peak_read_per_s", (peak_read * 100.0).round() / 100.0)
         .evidence("peak_write_per_s", (peak_write * 100.0).round() / 100.0)
         .evidence("metric_days", days);
-    f.title = format!("DynamoDB table {} uses a fraction of its provisioned capacity", r.display_name());
+    f.title = format!(
+        "DynamoDB table {} uses a fraction of its provisioned capacity",
+        r.display_name()
+    );
     f.summary = format!(
         "Its busiest minute in {days} days averaged {peak_read:.1} reads and {peak_write:.1} writes per second, against \
          {read} read and {write} write units provisioned. Without auto scaling, unused capacity is billed every hour. \
@@ -677,7 +725,12 @@ fn dynamodb_capacity(input: &RuleInput, r: &Resource) -> Option<Finding> {
          peaks outside the last {days} days don't need more. Lower it in steps and watch the table's throttled \
          requests in CloudWatch after each one: capacity can only be decreased a few times a day."
     );
-    Some(finish(f, savings, SavingsBasis::PublicPrice, Some(PriceSource::BuiltIn)))
+    Some(finish(
+        f,
+        savings,
+        SavingsBasis::PublicPrice,
+        Some(PriceSource::BuiltIn),
+    ))
 }
 
 fn idle_nat(input: &RuleInput, r: &Resource) -> Option<Finding> {
@@ -998,31 +1051,79 @@ mod tests {
         let old = "2026-01-10T00:00:00Z";
         let recent = "2026-10-01T00:00:00Z";
         let resources = vec![
-            r(T::SecretsManagerSecret, "s-old", json!({"last_accessed": old, "created": old})),
+            r(
+                T::SecretsManagerSecret,
+                "s-old",
+                json!({"last_accessed": old, "created": old}),
+            ),
             r(T::SecretsManagerSecret, "s-never", json!({"created": old})),
-            r(T::SecretsManagerSecret, "s-used", json!({"last_accessed": recent, "created": old})),
-            r(T::SecretsManagerSecret, "s-rds", json!({"created": old, "owning_service": "rds"})),
-            r(T::SecretsManagerSecret, "s-deleting", json!({"created": old, "deleted": recent})),
+            r(
+                T::SecretsManagerSecret,
+                "s-used",
+                json!({"last_accessed": recent, "created": old}),
+            ),
+            r(
+                T::SecretsManagerSecret,
+                "s-rds",
+                json!({"created": old, "owning_service": "rds"}),
+            ),
+            r(
+                T::SecretsManagerSecret,
+                "s-deleting",
+                json!({"created": old, "deleted": recent}),
+            ),
             r(T::KmsKey, "k-off", json!({"state": "Disabled"})),
             r(T::KmsKey, "k-on", json!({"state": "Enabled"})),
-            r(T::EcrRepository, "e-idle", json!({"size_gib": 4.0, "last_pulled": old, "last_pushed": old,
-                                               "lifecycle_policy": false, "untagged_size_gib": 2.0})),
-            r(T::EcrRepository, "e-messy", json!({"size_gib": 4.0, "last_pulled": recent, "last_pushed": recent,
-                                                "lifecycle_policy": false, "untagged_size_gib": 2.0, "untagged_images": 9})),
-            r(T::EcrRepository, "e-tidy", json!({"size_gib": 4.0, "last_pulled": recent, "lifecycle_policy": true,
-                                               "untagged_size_gib": 2.0})),
+            r(
+                T::EcrRepository,
+                "e-idle",
+                json!({"size_gib": 4.0, "last_pulled": old, "last_pushed": old,
+                                               "lifecycle_policy": false, "untagged_size_gib": 2.0}),
+            ),
+            r(
+                T::EcrRepository,
+                "e-messy",
+                json!({"size_gib": 4.0, "last_pulled": recent, "last_pushed": recent,
+                                                "lifecycle_policy": false, "untagged_size_gib": 2.0, "untagged_images": 9}),
+            ),
+            r(
+                T::EcrRepository,
+                "e-tidy",
+                json!({"size_gib": 4.0, "last_pulled": recent, "lifecycle_policy": true,
+                                               "untagged_size_gib": 2.0}),
+            ),
             r(T::LogGroup, "l-forever", json!({"stored_gib": 50.0})),
             r(T::LogGroup, "l-small", json!({"stored_gib": 0.2})),
-            r(T::LogGroup, "l-30d", json!({"stored_gib": 50.0, "retention_days": 30})),
-            r(T::EfsFileSystem, "f-orphan", json!({"state": "available", "mount_targets": 0,
-                                                  "standard_gib": 100.0, "ia_gib": 100.0, "size_gib": 200.0})),
-            r(T::EfsFileSystem, "f-used", json!({"state": "available", "mount_targets": 2, "standard_gib": 10.0})),
+            r(
+                T::LogGroup,
+                "l-30d",
+                json!({"stored_gib": 50.0, "retention_days": 30}),
+            ),
+            r(
+                T::EfsFileSystem,
+                "f-orphan",
+                json!({"state": "available", "mount_targets": 0,
+                                                  "standard_gib": 100.0, "ia_gib": 100.0, "size_gib": 200.0}),
+            ),
+            r(
+                T::EfsFileSystem,
+                "f-used",
+                json!({"state": "available", "mount_targets": 2, "standard_gib": 10.0}),
+            ),
             // A disaster-recovery replica has no mount targets by design.
-            r(T::EfsFileSystem, "f-replica", json!({"state": "available", "mount_targets": 0,
-                                                   "standard_gib": 100.0, "replication_destination": true})),
+            r(
+                T::EfsFileSystem,
+                "f-replica",
+                json!({"state": "available", "mount_targets": 0,
+                                                   "standard_gib": 100.0, "replication_destination": true}),
+            ),
             // Multi-arch images: untagged children are in use.
-            r(T::EcrRepository, "e-multiarch", json!({"size_gib": 4.0, "last_pulled": recent, "last_pushed": recent,
-                                                    "lifecycle_policy": false, "untagged_size_gib": 2.0, "multi_arch": true})),
+            r(
+                T::EcrRepository,
+                "e-multiarch",
+                json!({"size_gib": 4.0, "last_pulled": recent, "last_pushed": recent,
+                                                    "lifecycle_policy": false, "untagged_size_gib": 2.0, "multi_arch": true}),
+            ),
             r(T::Route53HostedZone, "z-empty", json!({"record_sets": 2})),
             r(T::Route53HostedZone, "z-used", json!({"record_sets": 14})),
         ];
@@ -1053,22 +1154,38 @@ mod tests {
             ("arn:l-forever".to_owned(), 500.0),
         ]);
         let with_cur = run(&resources, &[], &actual, None);
-        let saving = |rule: &str| with_cur.iter().find(|f| f.rule == rule).and_then(|f| f.monthly_savings);
+        let saving = |rule: &str| {
+            with_cur
+                .iter()
+                .find(|f| f.rule == rule)
+                .and_then(|f| f.monthly_savings)
+        };
         assert_eq!(saving("ecr-untagged-images"), Some(0.2));
         assert_eq!(saving("logs-no-retention"), Some(1.5));
 
         // EFS: provisioned throughput is billed above the included baseline
         // (2 TiB of Standard storage includes 100 MiB/s).
         let efs = |mibps: f64| {
-            platform_monthly(&r(T::EfsFileSystem, "f", json!({"standard_gib": 2048.0,
-                "throughput_mode": "provisioned", "provisioned_mibps": mibps}))).unwrap()
+            platform_monthly(&r(
+                T::EfsFileSystem,
+                "f",
+                json!({"standard_gib": 2048.0,
+                "throughput_mode": "provisioned", "provisioned_mibps": mibps}),
+            ))
+            .unwrap()
         };
         assert!((efs(100.0) - 2048.0 * 0.30).abs() < 1e-9);
         assert!((efs(150.0) - (2048.0 * 0.30 + 50.0 * 6.0)).abs() < 1e-9);
 
         // A repository whose images couldn't be listed has no price, not $0.
-        assert_eq!(platform_monthly(&r(T::EcrRepository, "e-unknown", json!({}))), None);
-        assert_eq!(platform_monthly(&r(T::EcrRepository, "e-empty", json!({"size_gib": 0.0}))), Some(0.0));
+        assert_eq!(
+            platform_monthly(&r(T::EcrRepository, "e-unknown", json!({}))),
+            None
+        );
+        assert_eq!(
+            platform_monthly(&r(T::EcrRepository, "e-empty", json!({"size_gib": 0.0}))),
+            Some(0.0)
+        );
     }
 
     #[test]
@@ -1081,25 +1198,67 @@ mod tests {
             r
         };
         let resources = vec![
-            r(T::Ec2Instance, "i-old", json!({"instance_type": "m4.large", "state": "running"})),
-            r(T::Ec2Instance, "i-new", json!({"instance_type": "m7i.large", "state": "running"})),
+            r(
+                T::Ec2Instance,
+                "i-old",
+                json!({"instance_type": "m4.large", "state": "running"}),
+            ),
+            r(
+                T::Ec2Instance,
+                "i-new",
+                json!({"instance_type": "m7i.large", "state": "running"}),
+            ),
             // t3 shares a prefix with nothing old; t2 does.
-            r(T::Ec2Instance, "i-t3", json!({"instance_type": "t3.micro", "state": "running"})),
-            r(T::RdsInstance, "db-old", json!({"instance_class": "db.t2.micro", "status": "available"})),
-            r(T::ElastiCacheCluster, "c-old", json!({"node_type": "cache.r4.large", "status": "available"})),
-            r(T::Ec2Instance, "i-off", json!({"instance_type": "c4.xlarge", "state": "terminated"})),
+            r(
+                T::Ec2Instance,
+                "i-t3",
+                json!({"instance_type": "t3.micro", "state": "running"}),
+            ),
+            r(
+                T::RdsInstance,
+                "db-old",
+                json!({"instance_class": "db.t2.micro", "status": "available"}),
+            ),
+            r(
+                T::ElastiCacheCluster,
+                "c-old",
+                json!({"node_type": "cache.r4.large", "status": "available"}),
+            ),
+            r(
+                T::Ec2Instance,
+                "i-off",
+                json!({"instance_type": "c4.xlarge", "state": "terminated"}),
+            ),
         ];
         let findings = run(&resources, &[], &HashMap::new(), None);
         let got: Vec<(&str, String, Option<&serde_json::Value>)> = findings
             .iter()
-            .map(|f| (f.rule, f.resources[0].label.clone(), f.evidence.get("current_generation")))
+            .map(|f| {
+                (
+                    f.rule,
+                    f.resources[0].label.clone(),
+                    f.evidence.get("current_generation"),
+                )
+            })
             .collect();
         assert_eq!(
             got,
             vec![
-                ("old-generation-type", "i-old".to_owned(), Some(&json!("m7i"))),
-                ("old-generation-type", "db-old".to_owned(), Some(&json!("db.t3"))),
-                ("old-generation-type", "c-old".to_owned(), Some(&json!("cache.r7g"))),
+                (
+                    "old-generation-type",
+                    "i-old".to_owned(),
+                    Some(&json!("m7i"))
+                ),
+                (
+                    "old-generation-type",
+                    "db-old".to_owned(),
+                    Some(&json!("db.t3"))
+                ),
+                (
+                    "old-generation-type",
+                    "c-old".to_owned(),
+                    Some(&json!("cache.r7g"))
+                ),
             ]
         );
         assert!(findings.iter().all(|f| f.monthly_savings.is_none()));
@@ -1107,26 +1266,44 @@ mod tests {
         assert!(findings[1].how_to_fix.contains("db.t3.micro"));
         // No m7i.small: the family starts at large.
         let small = run(
-            &[r(T::Ec2Instance, "i-small", json!({"instance_type": "m1.small", "state": "running"}))],
+            &[r(
+                T::Ec2Instance,
+                "i-small",
+                json!({"instance_type": "m1.small", "state": "running"}),
+            )],
             &[],
             &HashMap::new(),
             None,
         );
         assert!(!small[0].how_to_fix.contains("m7i.small"));
         assert!(small[0].how_to_fix.contains("m7i.large"));
-        assert!(small[0].how_to_fix.contains("instance-store"), "m1 has local disks");
+        assert!(
+            small[0].how_to_fix.contains("instance-store"),
+            "m1 has local disks"
+        );
         // Unknown virtualization on a PV-era family: check first.
         assert!(small[0].how_to_fix.contains("virtualization type"));
         let pv = run(
-            &[r(T::Ec2Instance, "i-pv", json!({"instance_type": "t1.micro", "state": "running",
-                                                "virtualization": "paravirtual"}))],
+            &[r(
+                T::Ec2Instance,
+                "i-pv",
+                json!({"instance_type": "t1.micro", "state": "running",
+                                                "virtualization": "paravirtual"}),
+            )],
             &[],
             &HashMap::new(),
             None,
         );
-        assert!(pv[0].how_to_fix.starts_with("This instance runs a paravirtual"));
+        assert!(
+            pv[0]
+                .how_to_fix
+                .starts_with("This instance runs a paravirtual")
+        );
         assert!(!pv[0].how_to_fix.contains("Change instance type"));
-        assert!(!findings[0].how_to_fix.contains("instance-store"), "m4 is EBS-only");
+        assert!(
+            !findings[0].how_to_fix.contains("instance-store"),
+            "m4 is EBS-only"
+        );
     }
 
     #[test]
@@ -1135,7 +1312,8 @@ mod tests {
             let mut r = Resource::new(T::DynamoDbTable, format!("arn:{name}"), A, R, name);
             r.attrs.insert("status".into(), json!("ACTIVE"));
             r.attrs.insert("billing_mode".into(), json!("PROVISIONED"));
-            r.attrs.insert("create_time".into(), json!("2026-01-01T00:00:00Z"));
+            r.attrs
+                .insert("create_time".into(), json!("2026-01-01T00:00:00Z"));
             r.attrs.insert("metric_days".into(), json!(14));
             r.attrs.insert("autoscaling".into(), json!(false));
             for (k, v) in attrs.as_object().unwrap() {
@@ -1143,10 +1321,14 @@ mod tests {
             }
             r
         };
-        let used = |rr: f64, wr: f64| json!({"consumed_read_units": rr * 60.0, "consumed_write_units": wr * 60.0,
-                                             "peak_read_per_s": rr, "peak_write_per_s": wr});
+        let used = |rr: f64, wr: f64| {
+            json!({"consumed_read_units": rr * 60.0, "consumed_write_units": wr * 60.0,
+                                             "peak_read_per_s": rr, "peak_write_per_s": wr})
+        };
         let merge = |mut a: serde_json::Value, b: serde_json::Value| {
-            a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+            a.as_object_mut()
+                .unwrap()
+                .extend(b.as_object().unwrap().clone());
             a
         };
         let cap = |rcu: u32, wcu: u32| json!({"read_capacity": rcu, "write_capacity": wcu});
@@ -1155,14 +1337,41 @@ mod tests {
             r("t-over", merge(cap(1000, 100), used(10.0, 40.0))),
             r("t-right", merge(cap(30, 10), used(14.0, 4.5))),
             // Auto scaling follows traffic; only no use at all is flagged.
-            r("t-scaled", merge(merge(cap(1000, 100), used(10.0, 40.0)), json!({"autoscaling": true}))),
-            r("t-scaled-idle", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"autoscaling": true}))),
+            r(
+                "t-scaled",
+                merge(
+                    merge(cap(1000, 100), used(10.0, 40.0)),
+                    json!({"autoscaling": true}),
+                ),
+            ),
+            r(
+                "t-scaled-idle",
+                merge(
+                    merge(cap(100, 50), used(0.0, 0.0)),
+                    json!({"autoscaling": true}),
+                ),
+            ),
             // Too new to judge, no metrics, on-demand.
-            r("t-new", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"create_time": "2026-10-10T00:00:00Z"}))),
+            r(
+                "t-new",
+                merge(
+                    merge(cap(100, 50), used(0.0, 0.0)),
+                    json!({"create_time": "2026-10-10T00:00:00Z"}),
+                ),
+            ),
             r("t-unknown", cap(100, 50)),
             // Reads through a global index don't show in the table's metrics.
-            r("t-gsi", merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"gsi_count": 1}))),
-            r("t-ondemand", merge(merge(cap(0, 0), used(0.0, 0.0)), json!({"billing_mode": "PAY_PER_REQUEST"}))),
+            r(
+                "t-gsi",
+                merge(merge(cap(100, 50), used(0.0, 0.0)), json!({"gsi_count": 1})),
+            ),
+            r(
+                "t-ondemand",
+                merge(
+                    merge(cap(0, 0), used(0.0, 0.0)),
+                    json!({"billing_mode": "PAY_PER_REQUEST"}),
+                ),
+            ),
         ];
         let findings = run(&resources, &[], &HashMap::new(), None);
         let got: Vec<(&str, String, Option<f64>)> = findings
@@ -1174,10 +1383,22 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("dynamodb-provisioned-unused", "t-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
+                (
+                    "dynamodb-provisioned-unused",
+                    "t-idle".to_owned(),
+                    round(100.0 * rcu + 50.0 * wcu)
+                ),
                 // Keeps 20 reads and 80 writes: twice the busiest minute.
-                ("dynamodb-overprovisioned", "t-over".to_owned(), round(980.0 * rcu + 20.0 * wcu)),
-                ("dynamodb-provisioned-unused", "t-scaled-idle".to_owned(), round(100.0 * rcu + 50.0 * wcu)),
+                (
+                    "dynamodb-overprovisioned",
+                    "t-over".to_owned(),
+                    round(980.0 * rcu + 20.0 * wcu)
+                ),
+                (
+                    "dynamodb-provisioned-unused",
+                    "t-scaled-idle".to_owned(),
+                    round(100.0 * rcu + 50.0 * wcu)
+                ),
             ]
         );
 
@@ -1188,16 +1409,25 @@ mod tests {
             "index_size_bytes": 2.0 * gib, "pitr": true, "read_capacity": 10, "write_capacity": 5, "gsi_read_capacity": 4, "gsi_write_capacity": 2})))
         .unwrap();
         assert!((price - (12.0 * 0.25 + 10.0 * 0.20 + 14.0 * rcu + 7.0 * wcu)).abs() < 1e-9);
-        let ia = platform_monthly(&r("t", json!({"size_bytes": 10.0 * gib, "table_class": "STANDARD_INFREQUENT_ACCESS"})))
-            .unwrap();
+        let ia = platform_monthly(&r(
+            "t",
+            json!({"size_bytes": 10.0 * gib, "table_class": "STANDARD_INFREQUENT_ACCESS"}),
+        ))
+        .unwrap();
         assert!((ia - 10.0 * 0.10).abs() < 1e-9);
         // 100 bytes of overhead per item.
-        let items = platform_monthly(&r("t", json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0})))
-            .unwrap();
+        let items = platform_monthly(&r(
+            "t",
+            json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0}),
+        ))
+        .unwrap();
         assert!((items - 0.25).abs() < 1e-9);
         // 48 more in a global table.
-        let global = platform_monthly(&r("t", json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0,
-            "replica_regions": ["eu-west-1"]})))
+        let global = platform_monthly(&r(
+            "t",
+            json!({"size_bytes": 0.0, "item_count": 1_073_741_824.0 / 100.0,
+            "replica_regions": ["eu-west-1"]}),
+        ))
         .unwrap();
         assert!((global - 0.25 * 1.48).abs() < 1e-9);
         // Unknown size: no price rather than $0.

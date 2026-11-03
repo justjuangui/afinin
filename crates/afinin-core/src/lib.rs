@@ -95,7 +95,10 @@ pub enum SyncStage {
     /// Loading new CUR files.
     Cur,
     /// Regions scanned so far (the global services count as one).
-    Inventory { done: usize, total: usize },
+    Inventory {
+        done: usize,
+        total: usize,
+    },
     /// Public prices, Savings Plans / RI coverage and anomalies.
     Findings,
 }

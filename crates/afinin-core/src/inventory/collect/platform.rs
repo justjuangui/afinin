@@ -14,7 +14,9 @@ use crate::inventory::{Collected, RelationKind as K, Resource, ResourceType as T
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 fn gib(bytes: i64) -> Option<Value> {
-    Some(json!(((bytes.max(0) as f64 / GIB) * 1000.0).round() / 1000.0))
+    Some(json!(
+        ((bytes.max(0) as f64 / GIB) * 1000.0).round() / 1000.0
+    ))
 }
 
 /// RFC 3339 from epoch milliseconds (CloudWatch Logs reports times so).
@@ -72,7 +74,9 @@ pub async fn kms(ctx: &Ctx<'_>) -> Result<Collected> {
     {
         for a in page.aliases() {
             if let (Some(key), Some(name)) = (a.target_key_id(), a.alias_name()) {
-                aliases.entry(key.to_owned()).or_insert_with(|| name.to_owned());
+                aliases
+                    .entry(key.to_owned())
+                    .or_insert_with(|| name.to_owned());
             }
         }
     }
@@ -99,7 +103,14 @@ pub async fn kms(ctx: &Ctx<'_>) -> Result<Collected> {
                 continue;
             }
             let me = meta.arn().map_or_else(
-                || format!("arn:{}:kms:{}:{}:key/{id}", arn::partition(ctx.region), ctx.region, ctx.account),
+                || {
+                    format!(
+                        "arn:{}:kms:{}:{}:key/{id}",
+                        arn::partition(ctx.region),
+                        ctx.region,
+                        ctx.account
+                    )
+                },
                 str::to_owned,
             );
             let mut r = Resource::new(T::KmsKey, me, ctx.account, ctx.region, id);
@@ -192,7 +203,10 @@ pub async fn ecr(ctx: &Ctx<'_>) -> Result<Collected> {
                             .filter_map(|i| i.image_size_in_bytes())
                             .sum()
                     };
-                    let latest = |f: fn(&aws_sdk_ecr::types::ImageDetail) -> Option<&aws_smithy_types::DateTime>| {
+                    let latest = |f: fn(
+                        &aws_sdk_ecr::types::ImageDetail,
+                    )
+                        -> Option<&aws_smithy_types::DateTime>| {
                         images.iter().filter_map(|i| f(i)).max_by_key(|d| d.secs())
                     };
                     r.attr("image_count", Some(json!(images.len())))
@@ -203,16 +217,29 @@ pub async fn ecr(ctx: &Ctx<'_>) -> Result<Collected> {
                         .attr("multi_arch", Some(Value::Bool(multi_arch)))
                         .attr("size_gib", gib(size(false)))
                         .attr("untagged_size_gib", gib(size(true)))
-                        .attr("archived_images", (archived_count > 0).then(|| json!(archived_count)))
-                        .attr("archived_size_gib", (archived_count > 0).then(|| gib(archived_bytes)).flatten())
+                        .attr(
+                            "archived_images",
+                            (archived_count > 0).then(|| json!(archived_count)),
+                        )
+                        .attr(
+                            "archived_size_gib",
+                            (archived_count > 0).then(|| gib(archived_bytes)).flatten(),
+                        )
                         .attr("last_pushed", time(latest(|i| i.image_pushed_at())))
                         .attr("last_pulled", time(latest(|i| i.last_recorded_pull_time())));
                 }
-                Err(e) => out
-                    .warnings
-                    .push(format!("ecr in {}: images of {name}: {}", ctx.region, aws_err(e))),
+                Err(e) => out.warnings.push(format!(
+                    "ecr in {}: images of {name}: {}",
+                    ctx.region,
+                    aws_err(e)
+                )),
             }
-            let lifecycle = match client.get_lifecycle_policy().repository_name(name).send().await {
+            let lifecycle = match client
+                .get_lifecycle_policy()
+                .repository_name(name)
+                .send()
+                .await
+            {
                 Ok(_) => Some(true),
                 Err(e)
                     if e.as_service_error()
@@ -248,7 +275,9 @@ pub async fn log_groups(ctx: &Ctx<'_>) -> Result<Collected> {
         .map_err(aws_err)?
     {
         for g in page.log_groups() {
-            let Some(name) = g.log_group_name() else { continue };
+            let Some(name) = g.log_group_name() else {
+                continue;
+            };
             // `arn` ends in `:*`; the tagging API uses the plain ARN.
             let me = g
                 .log_group_arn()
@@ -320,22 +349,36 @@ pub async fn efs(ctx: &Ctx<'_>) -> Result<Collected> {
             r.attr("state", s(Some(fs.life_cycle_state().as_str())))
                 .attr("mount_targets", Some(json!(fs.number_of_mount_targets())))
                 .attr("size_gib", size.and_then(|z| gib(z.value())))
-                .attr("standard_gib", size.and_then(|z| z.value_in_standard()).and_then(gib))
+                .attr(
+                    "standard_gib",
+                    size.and_then(|z| z.value_in_standard()).and_then(gib),
+                )
                 .attr("ia_gib", size.and_then(|z| z.value_in_ia()).and_then(gib))
-                .attr("archive_gib", size.and_then(|z| z.value_in_archive()).and_then(gib))
-                .attr("throughput_mode", s(fs.throughput_mode().map(|m| m.as_str())))
+                .attr(
+                    "archive_gib",
+                    size.and_then(|z| z.value_in_archive()).and_then(gib),
+                )
+                .attr(
+                    "throughput_mode",
+                    s(fs.throughput_mode().map(|m| m.as_str())),
+                )
                 .attr(
                     "provisioned_mibps",
                     fs.provisioned_throughput_in_mibps().map(|v| json!(v)),
                 )
-                .attr("one_zone", Some(Value::Bool(fs.availability_zone_name().is_some())))
+                .attr(
+                    "one_zone",
+                    Some(Value::Bool(fs.availability_zone_name().is_some())),
+                )
                 // The destination of an EFS replication: no mount targets by design.
                 .attr(
                     "replication_destination",
                     Some(Value::Bool(
                         fs.file_system_protection()
                             .and_then(|p| p.replication_overwrite_protection())
-                            == Some(&aws_sdk_efs::types::ReplicationOverwriteProtection::Replicating),
+                            == Some(
+                                &aws_sdk_efs::types::ReplicationOverwriteProtection::Replicating,
+                            ),
                     )),
                 )
                 .attr("created", time(Some(fs.creation_time())));
@@ -359,15 +402,21 @@ pub async fn route53(ctx: &Ctx<'_>) -> Result<Collected> {
     {
         for z in page.hosted_zones() {
             let id = z.id().trim_start_matches("/hostedzone/");
-            let me = format!("arn:{}:route53:::hostedzone/{id}", arn::partition(ctx.region));
+            let me = format!(
+                "arn:{}:route53:::hostedzone/{id}",
+                arn::partition(ctx.region)
+            );
             let mut r = Resource::new(T::Route53HostedZone, me, ctx.account, "global", id);
             r.name = Some(z.name().trim_end_matches('.').to_owned());
-            r.attr("record_sets", z.resource_record_set_count().map(|n| json!(n)))
-                .attr(
-                    "private",
-                    z.config().map(|c| Value::Bool(c.private_zone())),
-                )
-                .attr("linked_service", s(z.linked_service().and_then(|l| l.service_principal())));
+            r.attr(
+                "record_sets",
+                z.resource_record_set_count().map(|n| json!(n)),
+            )
+            .attr("private", z.config().map(|c| Value::Bool(c.private_zone())))
+            .attr(
+                "linked_service",
+                s(z.linked_service().and_then(|l| l.service_principal())),
+            );
             out.resources.push(r);
         }
     }

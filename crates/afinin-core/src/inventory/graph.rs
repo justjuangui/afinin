@@ -434,7 +434,8 @@ pub fn tag_coverage(resources: &[Resource], keys: &[String]) -> TagCoverage {
             count,
         })
         .collect();
-    c.untagged_by_type.sort_by_key(|t| std::cmp::Reverse(t.count));
+    c.untagged_by_type
+        .sort_by_key(|t| std::cmp::Reverse(t.count));
     c
 }
 
@@ -767,8 +768,16 @@ mod tests {
             r(ResourceType::ElasticIp, "eip-1", json!({})),
             r(ResourceType::ElasticIp, "eip-2", json!({})),
             r(ResourceType::NatGateway, "nat-1", json!({})),
-            r(ResourceType::LoadBalancer, "alb", json!({"type": "application"})),
-            r(ResourceType::EbsVolume, "vol", json!({"volume_type": "gp3", "size_gib": 100})),
+            r(
+                ResourceType::LoadBalancer,
+                "alb",
+                json!({"type": "application"}),
+            ),
+            r(
+                ResourceType::EbsVolume,
+                "vol",
+                json!({"volume_type": "gp3", "size_gib": 100}),
+            ),
             r(ResourceType::S3Bucket, "logs", json!({})),
             r(ResourceType::S3Bucket, "data", json!({})),
         ];
@@ -802,26 +811,43 @@ mod tests {
         assert_eq!(node("eip-2").service, Some("EC2 - Other"));
     }
 
-
     #[test]
     fn tag_coverage_counts_own_tags_only() {
         let tagged = |t: ResourceType, id: &str, tags: &[(&str, &str)]| {
             let mut r = Resource::new(t, format!("arn:{id}"), "1", "us-east-1", id);
-            r.tags = tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            r.tags = tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
             r
         };
         let resources = vec![
-            tagged(ResourceType::Ec2Instance, "i-1", &[("app", "web"), ("Name", "web-1")]),
+            tagged(
+                ResourceType::Ec2Instance,
+                "i-1",
+                &[("app", "web"), ("Name", "web-1")],
+            ),
             tagged(ResourceType::Ec2Instance, "i-2", &[("Name", "old")]),
-            tagged(ResourceType::S3Bucket, "b", &[("aws:cloudformation:stack-name", "s")]),
-            tagged(ResourceType::LambdaFunction, "f", &[("team", "data"), ("app", "")]),
+            tagged(
+                ResourceType::S3Bucket,
+                "b",
+                &[("aws:cloudformation:stack-name", "s")],
+            ),
+            tagged(
+                ResourceType::LambdaFunction,
+                "f",
+                &[("team", "data"), ("app", "")],
+            ),
             // Bulk types don't count.
             tagged(ResourceType::EbsSnapshot, "snap", &[]),
         ];
         let c = tag_coverage(&resources, &["app".into()]);
         assert_eq!((c.total, c.tagged), (4, 2));
         assert_eq!(c.by_key, vec![("app".to_owned(), 1)]);
-        assert_eq!(c.untagged_by_type[0].resource_type, ResourceType::Ec2Instance);
+        assert_eq!(
+            c.untagged_by_type[0].resource_type,
+            ResourceType::Ec2Instance
+        );
         assert_eq!(c.untagged_by_type.iter().map(|t| t.count).sum::<usize>(), 2);
     }
 
@@ -925,7 +951,12 @@ mod tests {
         };
         assert_eq!(only(&["cloud_formation"]), ["q1"]);
         assert_eq!(only(&[UNMANAGED]), ["q2"]);
-        let g = build(&resources, &[], &GraphFilter::default(), &CostOverlay::default());
+        let g = build(
+            &resources,
+            &[],
+            &GraphFilter::default(),
+            &CostOverlay::default(),
+        );
         assert_eq!(
             g.nodes[0].managed_by.as_ref().map(|m| m.tool),
             Some(iac::IacTool::CloudFormation)

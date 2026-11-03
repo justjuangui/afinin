@@ -321,7 +321,10 @@ mod tests {
         };
         let rows = [
             row("savings_plans", None),
-            row("reservations", Some("Amazon Elastic Compute Cloud - Compute")),
+            row(
+                "reservations",
+                Some("Amazon Elastic Compute Cloud - Compute"),
+            ),
             row("reservations", Some("Amazon Relational Database Service")),
         ];
         let keys: Vec<String> = rows.iter().map(CommitmentSummary::key).collect();
@@ -348,7 +351,10 @@ mod tests {
         // RDS keeps its row (and its old time, so the next sync retries),
         // EC2 loses its row.
         db.conn
-            .execute("UPDATE commitments SET fetched_at = '2026-01-01T00:00:00Z'", [])
+            .execute(
+                "UPDATE commitments SET fetched_at = '2026-01-01T00:00:00Z'",
+                [],
+            )
             .unwrap();
         let ec2 = crate::findings::commitments::key(
             "reservations",
@@ -364,7 +370,13 @@ mod tests {
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
-        assert_eq!(kept, ["reservations:Amazon Relational Database Service", "savings_plans"]);
+        assert_eq!(
+            kept,
+            [
+                "reservations:Amazon Relational Database Service",
+                "savings_plans"
+            ]
+        );
         assert_eq!(
             db.commitments_fetched_at("acc").unwrap().as_deref(),
             Some("2026-01-01T00:00:00Z")

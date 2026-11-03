@@ -195,7 +195,10 @@ pub fn known_price(model: &str) -> Option<TokenPrice> {
 /// `model@2026…`), so a priced ID followed by a version also counts; another
 /// model sharing a prefix (`gpt-4` / `gpt-4o`, `claude-opus-5` /
 /// `claude-opus-5-5`) does not.
-fn best_match<'a>(model: &str, prices: impl Iterator<Item = (&'a str, TokenPrice)>) -> Option<TokenPrice> {
+fn best_match<'a>(
+    model: &str,
+    prices: impl Iterator<Item = (&'a str, TokenPrice)>,
+) -> Option<TokenPrice> {
     let version_of = |id: &str| {
         model.strip_prefix(id).is_some_and(|rest| {
             rest.is_empty()
@@ -338,8 +341,14 @@ mod tests {
         // Anthropic's own IDs have a list price unless one is entered;
         // Bedrock IDs and prefixes of other models don't.
         assert_eq!(cfg.price("claude-opus-5-5").map(|p| p.input), Some(4.0));
-        assert_eq!(cfg.price("claude-opus-5-20260101").map(|p| p.input), Some(5.0));
-        assert_eq!(cfg.price("claude-opus-5-5").and_then(|p| p.cache_read), Some(0.20));
+        assert_eq!(
+            cfg.price("claude-opus-5-20260101").map(|p| p.input),
+            Some(5.0)
+        );
+        assert_eq!(
+            cfg.price("claude-opus-5-5").and_then(|p| p.cache_read),
+            Some(0.20)
+        );
         assert_eq!(cfg.price("anthropic.claude-opus-5-5"), None);
         cfg.prices.insert("claude-opus-5-5".into(), price);
         assert_eq!(cfg.price("claude-opus-5-5"), Some(price));

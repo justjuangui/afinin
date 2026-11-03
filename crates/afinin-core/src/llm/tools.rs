@@ -335,7 +335,11 @@ pub fn execute(afinin: &Afinin, workspace_id: &str, name: &str, input: &Value) -
                 workspace_id,
                 &GraphFilter {
                     include_network: true,
-                    managed_by: input["managed_by"].as_str().map(str::to_owned).into_iter().collect(),
+                    managed_by: input["managed_by"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect(),
                     ..Default::default()
                 },
             )?;

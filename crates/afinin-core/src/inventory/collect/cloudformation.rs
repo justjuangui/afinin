@@ -35,11 +35,18 @@ pub struct Member {
 
 /// Stack flavour from its name and its resources' (logical ID, type).
 /// `root_cdk`: the root stack of a nested stack has CDK metadata.
-pub fn classify(name: &str, resources: &[(String, String)], root_cdk: bool) -> (IacTool, Option<String>) {
+pub fn classify(
+    name: &str,
+    resources: &[(String, String)],
+    root_cdk: bool,
+) -> (IacTool, Option<String>) {
     if root_cdk || resources.iter().any(|(_, t)| t == "AWS::CDK::Metadata") {
         return (IacTool::Cdk, Some("the stack has CDK metadata".into()));
     }
-    if resources.iter().any(|(l, _)| l == "ServerlessDeploymentBucket") {
+    if resources
+        .iter()
+        .any(|(l, _)| l == "ServerlessDeploymentBucket")
+    {
         return (
             IacTool::Serverless,
             Some("the stack has a ServerlessDeploymentBucket".into()),
@@ -52,14 +59,22 @@ pub fn classify(name: &str, resources: &[(String, String)], root_cdk: bool) -> (
         );
     }
     if name.starts_with("amplify-") {
-        return (IacTool::Amplify, Some("Amplify names its stacks amplify-…".into()));
+        return (
+            IacTool::Amplify,
+            Some("Amplify names its stacks amplify-…".into()),
+        );
     }
     (IacTool::CloudFormation, None)
 }
 
 /// Stack ID, name, root stack ID and (logical ID, physical ID, type) of
 /// each resource.
-type Listed = (String, String, Option<String>, Vec<(String, String, String)>);
+type Listed = (
+    String,
+    String,
+    Option<String>,
+    Vec<(String, String, String)>,
+);
 
 pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
     let client = aws_sdk_cloudformation::Client::new(ctx.config);
@@ -79,7 +94,11 @@ pub async fn collect(ctx: &Ctx<'_>) -> Result<Collected> {
             let (Some(id), Some(name)) = (s.stack_id(), s.stack_name()) else {
                 continue;
             };
-            summaries.push((id.to_owned(), name.to_owned(), s.root_id().map(str::to_owned)));
+            summaries.push((
+                id.to_owned(),
+                name.to_owned(),
+                s.root_id().map(str::to_owned),
+            ));
         }
     }
 
@@ -163,15 +182,27 @@ mod tests {
 
     #[test]
     fn classifies_stacks_by_their_resources_and_names() {
-        let cdk = res(&[("CDKMetadata", "AWS::CDK::Metadata"), ("Bucket83908E77", "AWS::S3::Bucket")]);
+        let cdk = res(&[
+            ("CDKMetadata", "AWS::CDK::Metadata"),
+            ("Bucket83908E77", "AWS::S3::Bucket"),
+        ]);
         assert_eq!(classify("api", &cdk, false).0, IacTool::Cdk);
         // A nested stack whose root has CDK metadata is CDK too.
         let plain = res(&[("Queue", "AWS::SQS::Queue")]);
         assert_eq!(classify("api-Nested-1", &plain, true).0, IacTool::Cdk);
         let sls = res(&[("ServerlessDeploymentBucket", "AWS::S3::Bucket")]);
         assert_eq!(classify("svc-dev", &sls, false).0, IacTool::Serverless);
-        assert_eq!(classify("awseb-e-abc123-stack", &plain, false).0, IacTool::ElasticBeanstalk);
-        assert_eq!(classify("amplify-app-dev-123", &plain, false).0, IacTool::Amplify);
-        assert_eq!(classify("mkt-stack-blue", &plain, false), (IacTool::CloudFormation, None));
+        assert_eq!(
+            classify("awseb-e-abc123-stack", &plain, false).0,
+            IacTool::ElasticBeanstalk
+        );
+        assert_eq!(
+            classify("amplify-app-dev-123", &plain, false).0,
+            IacTool::Amplify
+        );
+        assert_eq!(
+            classify("mkt-stack-blue", &plain, false),
+            (IacTool::CloudFormation, None)
+        );
     }
 }

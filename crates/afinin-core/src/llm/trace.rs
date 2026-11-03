@@ -143,8 +143,18 @@ mod tests {
         let mut turn = Turn {
             stop: StopReason::EndTurn,
             citations: vec![
-                cite(1, json!({"group_by": "service", "start": "2026-09-01"}), true, 100),
-                cite(2, json!({"start": "2026-09-01", "group_by": "service"}), true, 100),
+                cite(
+                    1,
+                    json!({"group_by": "service", "start": "2026-09-01"}),
+                    true,
+                    100,
+                ),
+                cite(
+                    2,
+                    json!({"start": "2026-09-01", "group_by": "service"}),
+                    true,
+                    100,
+                ),
                 cite(3, json!({"group_by": "nope"}), false, 50),
                 cite(4, json!({"group_by": "resource"}), true, 40_000),
             ],
@@ -152,7 +162,10 @@ mod tests {
             ..Default::default()
         };
         let f = flags(&turn);
-        assert!(matches!(&f[0], TraceFlag::RepeatedCall { times: 2, .. }), "{f:?}");
+        assert!(
+            matches!(&f[0], TraceFlag::RepeatedCall { times: 2, .. }),
+            "{f:?}"
+        );
         assert_eq!(f[1], TraceFlag::ToolErrors { count: 1 });
         assert_eq!(
             f[2],
