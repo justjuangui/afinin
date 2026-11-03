@@ -46,6 +46,12 @@ jobs:
         run: mkdir -p apps/desktop/dist
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The encryption tests load httpfs from a file, as release builds do.
+      - name: DuckDB httpfs extension
+        shell: bash
+        run: |
+          bash scripts/fetch-httpfs.sh "$(rustc -vV | sed -n 's/^host: //p')" .duckdb-test/httpfs.duckdb_extension
+          echo "AFININ_TEST_HTTPFS=${{ github.workspace }}/.duckdb-test/httpfs.duckdb_extension" >> "$GITHUB_ENV"
       - run: cargo test --workspace
       - name: Updater feature compiles
         run: cargo check -p afinin-desktop --features updater

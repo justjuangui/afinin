@@ -35,6 +35,10 @@ Without it, macOS shows an "unidentified developer" warning. Set the secrets `AP
 `APPLE_PASSWORD` (app-specific password) and `APPLE_TEAM_ID`. See
 <https://v2.tauri.app/distribute/sign/macos/>.
 
+When you turn it on, check that the signed app still opens its database: it loads DuckDB's
+`httpfs` extension (signed by DuckDB, not by you), which a hardened runtime may refuse unless
+the app has the `com.apple.security.cs.disable-library-validation` entitlement.
+
 ### Windows code signing (recommended)
 
 Configure `bundle.windows` signing per <https://v2.tauri.app/distribute/sign/windows/>
@@ -68,4 +72,8 @@ npm run tauri build                        # no auto-updater
 npm run tauri build -- --features updater --config src-tauri/tauri.release.conf.json
 ```
 
-The second form needs the update key (`TAURI_SIGNING_PRIVATE_KEY`) and a real `pubkey`.
+The second form needs the update key (`TAURI_SIGNING_PRIVATE_KEY`) and a real `pubkey`. It also
+ships DuckDB's `httpfs` extension, which database encryption needs: download it first with
+`scripts/fetch-httpfs.sh <rust-target> apps/desktop/src-tauri/resources/duckdb/httpfs.duckdb_extension`.
+Builds without it (the first form, `tauri dev`) download it on first launch into
+`~/.duckdb/extensions`, so they need internet once.

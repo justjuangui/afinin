@@ -48,6 +48,8 @@ First feature-complete version (MVP, milestones M0–M6).
 - **Releases**: built only when started by hand (Actions → Release → Run workflow, with the
   version), after checking the version, the CHANGELOG and CI; installed apps look for updates in
   the repository that published them.
+- **Encrypted database from the first launch**: installers ship DuckDB's signed `httpfs`
+  extension, which encryption needs, instead of downloading it, so a new install works offline.
 - **Demo mode** (`npm run demo`): the UI in a browser with a fictional company's data, used for
   the README screenshots.
 - **Infrastructure as code**: which tool made each resource (CloudFormation, CDK, SAM, Serverless,

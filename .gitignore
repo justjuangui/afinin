@@ -22,3 +22,7 @@ apps/desktop/src-tauri/gen/
 !.vscode/extensions.json
 .DS_Store
 .playwright-mcp/
+
+# DuckDB httpfs extension, downloaded by scripts/fetch-httpfs.sh
+.duckdb-test/
+apps/desktop/src-tauri/resources/duckdb/
