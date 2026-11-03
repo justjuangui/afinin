@@ -167,7 +167,18 @@ jobs:
           projectPath: apps/desktop
           tagName: ${{ needs.prepare.outputs.tag }}
           releaseName: Afinín ${{ needs.prepare.outputs.tag }}
-          releaseBody: See CHANGELOG.md. Verify downloads with the SBOMs and the update signatures.
+          # Keep the warning until macOS notarization and Windows signing are set up.
+          releaseBody: |
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what's new.
+
+            > [!WARNING]
+            > **These installers aren't code-signed yet**, so your system warns you the first time you open Afinín.
+            > - **macOS**: "Apple could not verify…". Right-click Afinín in Applications → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
+            > - **Windows**: "Windows protected your PC". Click **More info** → **Run anyway**.
+            >
+            > The warning is about the missing signature, not about the app: Afinín is open source, read-only on AWS, and built by this repository's [release workflow](https://github.com/${{ github.repository }}/actions/workflows/release.yml). See [first launch](https://github.com/${{ github.repository }}#first-launch-unsigned-installers).
+
+            **Downloads**: `.dmg` (macOS, Apple Silicon or Intel), `.msi` or `-setup.exe` (Windows), `.AppImage`, `.deb` or `.rpm` (Linux). The `.sig` files are for the auto-updater; `*.cdx.json` are the SBOMs.
           releaseDraft: true
           includeUpdaterJson: true
           args: --target ${{ matrix.target }} --features updater --config src-tauri/tauri.release.conf.json

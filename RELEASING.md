@@ -38,6 +38,10 @@ System Settings → Privacy & Security → **Open Anyway**). To sign and notariz
 <https://v2.tauri.app/distribute/sign/macos/>. The workflow passes them to the build only
 when `APPLE_CERTIFICATE` is set.
 
+Until macOS and Windows signing are both set up, the release notes (`releaseBody` in the
+workflow) and the README's "First launch" section warn users about it. Remove those warnings
+once both are signed.
+
 When you turn it on, check that the signed app still opens its database: it loads DuckDB's
 `httpfs` extension (signed by DuckDB, not by you), which a hardened runtime may refuse unless
 the app has the `com.apple.security.cs.disable-library-validation` entitlement.
