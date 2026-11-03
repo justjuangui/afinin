@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run by hand (Actions → CI → Run workflow), e.g. for a commit pushed while
+  # Actions were off: a release needs a passing CI run on its commit.
+  workflow_dispatch:
 
 permissions:
   contents: read
