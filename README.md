@@ -77,7 +77,8 @@ or a cloud provider (Anthropic, Amazon Bedrock, any OpenAI-compatible API). You 
 ## Get started
 
 1. Download the installer for your system from
-   [Releases](https://github.com/justjuangui/afinin/releases/latest).
+   [Releases](https://github.com/justjuangui/afinin/releases/latest). The first launch shows
+   a security warning: see [First launch](#first-launch-unsigned-installers).
 2. Give Afinín read-only access: deploy the ready-made IAM role
    ([policies/](policies/): CloudFormation StackSet, Terraform or plain JSON), or use an
    existing profile.
@@ -87,6 +88,21 @@ or a cloud provider (Anthropic, Amazon Bedrock, any OpenAI-compatible API). You 
 
 Want to look around first, without AWS? Run demo mode (see [Development](#development)):
 the real app with Brightlane's sample data.
+
+### First launch: unsigned installers
+
+> [!WARNING]
+> The installers aren't code-signed yet, so the first time you open Afinín your system warns
+> you that it can't verify the developer.
+> - **macOS** ("Apple could not verify…"): right-click Afinín in Applications → **Open**, or
+>   System Settings → Privacy & Security → **Open Anyway**. Once is enough.
+> - **Windows** ("Windows protected your PC"): click **More info** → **Run anyway**.
+> - **Linux**: no warning. For the AppImage, make it executable first (`chmod +x`).
+>
+> The installers are built from this repository by its
+> [release workflow](https://github.com/justjuangui/afinin/actions/workflows/release.yml), and
+> updates are signed and checked before they install. Signed and notarized installers will
+> remove these warnings.
 
 ## Repository layout
 
