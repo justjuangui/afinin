@@ -51,6 +51,9 @@ pub use storage::{
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub data_dir: PathBuf,
+    /// DuckDB's `httpfs` extension shipped with the app, which database
+    /// encryption needs. Without it DuckDB downloads it on first use.
+    pub httpfs_extension: Option<PathBuf>,
 }
 
 impl AppPaths {
@@ -60,6 +63,7 @@ impl AppPaths {
             .ok_or_else(|| Error::Other("cannot determine the user data directory".into()))?;
         Ok(Self {
             data_dir: dirs.data_dir().to_path_buf(),
+            httpfs_extension: None,
         })
     }
 
@@ -134,7 +138,8 @@ impl Afinin {
         aws_files: AwsFiles,
     ) -> Result<Self> {
         let key = secrets::get_or_create_key(secrets.as_ref(), storage::DB_KEY_SECRET)?;
-        let storage = Storage::open(&paths.database(), &key)?;
+        let storage =
+            Storage::open_with(&paths.database(), &key, paths.httpfs_extension.as_deref())?;
         storage.reset_stale_syncs()?;
         let mut afinin = Self::with_storage(storage, secrets, aws_files);
         afinin.tmp_dir = paths.data_dir.join("tmp");

@@ -325,8 +325,17 @@ fn sql_string(s: &str) -> String {
 }
 
 impl Storage {
-    /// Opens (or creates) the encrypted database at `path`.
+    /// Opens (or creates) the encrypted database at `path`, downloading
+    /// DuckDB's `httpfs` extension if this machine doesn't have it yet.
     pub fn open(path: &Path, key: &str) -> Result<Self> {
+        Self::open_with(path, key, None)
+    }
+
+    /// Like [`Storage::open`], loading `httpfs` from `extension` when given
+    /// (the copy shipped with the app). DuckDB writes encrypted databases
+    /// only with the crypto `httpfs` provides; without it the database is
+    /// read-only. DuckDB checks the extension's signature when loading it.
+    pub fn open_with(path: &Path, key: &str, extension: Option<&Path>) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -334,6 +343,22 @@ impl Storage {
         let path = path
             .to_str()
             .ok_or_else(|| Error::Other("database path is not valid UTF-8".into()))?;
+        let load = match extension.filter(|p| p.is_file()) {
+            Some(p) => {
+                let p = p
+                    .to_str()
+                    .ok_or_else(|| Error::Other("extension path is not valid UTF-8".into()))?;
+                format!("LOAD {};", sql_string(p))
+            }
+            None => "INSTALL httpfs; LOAD httpfs;".to_owned(),
+        };
+        conn.execute_batch(&load).map_err(|e| {
+            Error::Other(format!(
+                "Afinín couldn't load DuckDB's encryption support (the httpfs extension): {e}. \
+                 Builds without it download it once from extensions.duckdb.org: check the \
+                 internet connection, or reinstall Afinín."
+            ))
+        })?;
         conn.execute_batch(&format!(
             "ATTACH {} AS afinin (ENCRYPTION_KEY {}); USE afinin;",
             sql_string(path),
@@ -342,6 +367,17 @@ impl Storage {
         let storage = Self { conn };
         storage.migrate()?;
         Ok(storage)
+    }
+
+    /// An encrypted database for tests. Loads `httpfs` from the file in
+    /// `AFININ_TEST_HTTPFS` when set (CI downloads it with
+    /// `scripts/fetch-httpfs.sh`), the way release builds load their copy;
+    /// otherwise DuckDB downloads it, which tests running at the same time
+    /// can race on.
+    #[cfg(test)]
+    pub(crate) fn open_for_test(path: &Path, key: &str) -> Result<Self> {
+        let extension = std::env::var_os("AFININ_TEST_HTTPFS").map(std::path::PathBuf::from);
+        Self::open_with(path, key, extension.as_deref())
     }
 
     /// Unencrypted in-memory database, for tests.
@@ -675,7 +711,7 @@ mod tests {
         let path = dir.path().join("afinin.duckdb");
         let key = "0123456789abcdef0123456789abcdef";
         {
-            let db = Storage::open(&path, key).unwrap();
+            let db = Storage::open_for_test(&path, key).unwrap();
             db.create_workspace("VerySecretWorkspaceName").unwrap();
             db.conn.execute_batch("CHECKPOINT;").unwrap();
         }
@@ -683,9 +719,9 @@ mod tests {
         let needle = b"VerySecretWorkspaceName";
         assert!(!bytes.windows(needle.len()).any(|w| w == needle));
 
-        assert!(Storage::open(&path, "wrong-key-wrong-key-wrong-key-00").is_err());
+        assert!(Storage::open_for_test(&path, "wrong-key-wrong-key-wrong-key-00").is_err());
 
-        let db = Storage::open(&path, key).unwrap();
+        let db = Storage::open_for_test(&path, key).unwrap();
         assert_eq!(
             db.list_workspaces().unwrap()[0].name,
             "VerySecretWorkspaceName"

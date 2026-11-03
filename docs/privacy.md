@@ -19,6 +19,9 @@ Afinín is local-first: there is no Afinín backend and no telemetry.
 - Read-only AWS API calls, made with your credentials, to your accounts.
 - AWS Price List queries (public prices; no account data).
 - If you enable the assistant: requests to the provider you chose.
+- Only in builds you make yourself (not the released installers, which include it): one
+  download of DuckDB's `httpfs` extension, which encrypts the database, from
+  extensions.duckdb.org on first launch. No data is sent.
 
 ## The assistant and redaction
 

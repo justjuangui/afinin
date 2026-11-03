@@ -112,6 +112,12 @@ jobs:
       - run: npm ci
         working-directory: apps/desktop
 
+      # Database encryption needs DuckDB's httpfs extension: ship it, so the
+      # app works offline from the first launch (see tauri.release.conf.json).
+      - name: DuckDB httpfs extension
+        shell: bash
+        run: bash scripts/fetch-httpfs.sh ${{ matrix.target }} apps/desktop/src-tauri/resources/duckdb/httpfs.duckdb_extension
+
       # Installed apps look for updates in the repository that published them.
       - name: Inject the update key and address
         shell: bash

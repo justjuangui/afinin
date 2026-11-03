@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn export_import_round_trip_between_encrypted_databases() {
         let dir = tempfile::tempdir().unwrap();
-        let src = Storage::open(
+        let src = Storage::open_for_test(
             &dir.path().join("a.duckdb"),
             "key-a-key-a-key-a-key-a-key-a-00",
         )
@@ -103,7 +103,7 @@ mod tests {
         let export = dir.path().join("export");
         src.export_to_dir(&export).unwrap();
 
-        let dst = Storage::open(
+        let dst = Storage::open_for_test(
             &dir.path().join("b.duckdb"),
             "key-b-key-b-key-b-key-b-key-b-00",
         )

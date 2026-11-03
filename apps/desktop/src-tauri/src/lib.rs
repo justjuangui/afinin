@@ -63,8 +63,12 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| Error::Other(format!("background task failed: {e}")))?
 }
 
-fn open_core() -> Result<Afinin, String> {
-    let paths = AppPaths::platform_default().map_err(|e| e.to_string())?;
+/// `httpfs` ships in release builds as a resource (see the release workflow);
+/// development builds download it on first use.
+fn open_core(resources: Option<std::path::PathBuf>) -> Result<Afinin, String> {
+    let mut paths = AppPaths::platform_default().map_err(|e| e.to_string())?;
+    paths.httpfs_extension =
+        resources.map(|dir| dir.join("duckdb").join("httpfs.duckdb_extension"));
     Afinin::open(&paths, Arc::new(KeychainStore), AwsFiles::from_env()).map_err(|e| e.to_string())
 }
 
@@ -800,19 +804,21 @@ pub fn run() {
         )
         .init();
 
-    let core = open_core();
-    if let Err(e) = &core {
-        tracing::error!("failed to open local data: {e}");
-    }
-
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init());
     #[cfg(feature = "updater")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
-        .manage(AppState(core.map(Arc::new)))
         .setup(|app| {
+            // Here rather than before the builder: the bundled extension's
+            // path is only known once the app is set up. Setup runs before
+            // any window opens, so no command can come first.
+            let core = open_core(app.path().resource_dir().ok());
+            if let Err(e) = &core {
+                tracing::error!("failed to open local data: {e}");
+            }
+            app.manage(AppState(core.map(Arc::new)));
             spawn_scheduler(app.handle().clone());
             Ok(())
         })
