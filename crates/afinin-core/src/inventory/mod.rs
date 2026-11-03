@@ -346,12 +346,18 @@ impl Collected {
     /// the resource's region, except for S3 buckets and CloudFront, whose
     /// names are global.
     pub fn apply_stacks(&mut self, stacks: &[collect::cloudformation::Stack]) {
-        type Hit<'a> = (&'a collect::cloudformation::Stack, &'a collect::cloudformation::Member);
+        type Hit<'a> = (
+            &'a collect::cloudformation::Stack,
+            &'a collect::cloudformation::Member,
+        );
         let mut by_id: std::collections::HashMap<&str, Vec<Hit<'_>>> =
             std::collections::HashMap::new();
         for st in stacks {
             for m in &st.members {
-                by_id.entry(m.physical_id.as_str()).or_default().push((st, m));
+                by_id
+                    .entry(m.physical_id.as_str())
+                    .or_default()
+                    .push((st, m));
             }
         }
         for r in &mut self.resources {
@@ -384,8 +390,14 @@ impl Collected {
                 let logical = m.logical_id.as_str();
                 let (stack, tool, reason) = (st.name.clone(), st.tool.id(), st.reason.clone());
                 r.attr(iac::ATTR_STACK, Some(serde_json::Value::String(stack)))
-                    .attr(iac::ATTR_LOGICAL_ID, Some(serde_json::Value::String(logical.to_owned())))
-                    .attr(iac::ATTR_TOOL, Some(serde_json::Value::String(tool.to_owned())))
+                    .attr(
+                        iac::ATTR_LOGICAL_ID,
+                        Some(serde_json::Value::String(logical.to_owned())),
+                    )
+                    .attr(
+                        iac::ATTR_TOOL,
+                        Some(serde_json::Value::String(tool.to_owned())),
+                    )
                     .attr(iac::ATTR_TOOL_REASON, reason.map(serde_json::Value::String));
             }
         }
@@ -433,28 +445,79 @@ mod tests {
                 .collect(),
         };
         let mut found = Collected::default();
-        let mut queue = Resource::new(ResourceType::SqsQueue, "arn:aws:sqs:us-east-1:1:jobs", "1", "us-east-1", "jobs");
-        queue.attr("url", Some("https://sqs.us-east-1.amazonaws.com/1/jobs".into()));
+        let mut queue = Resource::new(
+            ResourceType::SqsQueue,
+            "arn:aws:sqs:us-east-1:1:jobs",
+            "1",
+            "us-east-1",
+            "jobs",
+        );
+        queue.attr(
+            "url",
+            Some("https://sqs.us-east-1.amazonaws.com/1/jobs".into()),
+        );
         found.resources = vec![
             queue,
             // Same function name in two regions: the stack in its own region wins.
-            Resource::new(ResourceType::LambdaFunction, "arn:fn-eu", "1", "eu-west-1", "handler"),
+            Resource::new(
+                ResourceType::LambdaFunction,
+                "arn:fn-eu",
+                "1",
+                "eu-west-1",
+                "handler",
+            ),
             // Listed globally; its stack is in a region.
-            Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::assets", "1", "global", "assets"),
-            Resource::new(ResourceType::S3Bucket, "arn:aws:s3:::other", "1", "us-east-1", "other"),
+            Resource::new(
+                ResourceType::S3Bucket,
+                "arn:aws:s3:::assets",
+                "1",
+                "global",
+                "assets",
+            ),
+            Resource::new(
+                ResourceType::S3Bucket,
+                "arn:aws:s3:::other",
+                "1",
+                "us-east-1",
+                "other",
+            ),
             // Same name as the stack's function: another type, not a member.
-            Resource::new(ResourceType::DynamoDbTable, "arn:table", "1", "us-east-1", "handler"),
+            Resource::new(
+                ResourceType::DynamoDbTable,
+                "arn:table",
+                "1",
+                "us-east-1",
+                "handler",
+            ),
             // A function with that name in a region where no stack has it.
-            Resource::new(ResourceType::LambdaFunction, "arn:fn-ap", "1", "ap-south-1", "handler"),
+            Resource::new(
+                ResourceType::LambdaFunction,
+                "arn:fn-ap",
+                "1",
+                "ap-south-1",
+                "handler",
+            ),
             // A node of a stack's replication group.
             {
-                let mut c = Resource::new(ResourceType::ElastiCacheCluster, "arn:redis-001", "1", "us-east-1", "redis-001");
+                let mut c = Resource::new(
+                    ResourceType::ElastiCacheCluster,
+                    "arn:redis-001",
+                    "1",
+                    "us-east-1",
+                    "redis-001",
+                );
                 c.attr("replication_group", Some("redis".into()));
                 c
             },
             // A Name tag that looks like a stack member's ID proves nothing.
             {
-                let mut sg = Resource::new(ResourceType::SecurityGroup, "arn:sg-manual", "1", "us-east-1", "sg-0manual");
+                let mut sg = Resource::new(
+                    ResourceType::SecurityGroup,
+                    "arn:sg-manual",
+                    "1",
+                    "us-east-1",
+                    "sg-0manual",
+                );
                 sg.name = Some("sg-0stack".into());
                 sg
             },
@@ -463,14 +526,21 @@ mod tests {
             stack(
                 "us-east-1",
                 &[
-                    ("https://sqs.us-east-1.amazonaws.com/1/jobs", "JobsQueueA1B2C3D4", "AWS::SQS::Queue"),
+                    (
+                        "https://sqs.us-east-1.amazonaws.com/1/jobs",
+                        "JobsQueueA1B2C3D4",
+                        "AWS::SQS::Queue",
+                    ),
                     ("handler", "HandlerUs", "AWS::Lambda::Function"),
                     ("assets", "Assets", "AWS::S3::Bucket"),
                     ("sg-0stack", "WebSg", "AWS::EC2::SecurityGroup"),
                     ("redis", "Cache", "AWS::ElastiCache::ReplicationGroup"),
                 ],
             ),
-            stack("eu-west-1", &[("handler", "HandlerEu", "AWS::Lambda::Function")]),
+            stack(
+                "eu-west-1",
+                &[("handler", "HandlerEu", "AWS::Lambda::Function")],
+            ),
         ]);
         let attr = |i: usize, k: &str| {
             found.resources[i]
@@ -479,11 +549,18 @@ mod tests {
                 .and_then(|v| v.as_str())
                 .map(str::to_owned)
         };
-        assert_eq!(attr(0, iac::ATTR_LOGICAL_ID).as_deref(), Some("JobsQueueA1B2C3D4"));
+        assert_eq!(
+            attr(0, iac::ATTR_LOGICAL_ID).as_deref(),
+            Some("JobsQueueA1B2C3D4")
+        );
         assert_eq!(attr(1, iac::ATTR_STACK).as_deref(), Some("api-eu-west-1"));
         assert_eq!(attr(2, iac::ATTR_TOOL).as_deref(), Some("cdk"));
         assert_eq!(attr(3, iac::ATTR_STACK), None);
-        assert_eq!(attr(4, iac::ATTR_STACK), None, "a table isn't the stack's function");
+        assert_eq!(
+            attr(4, iac::ATTR_STACK),
+            None,
+            "a table isn't the stack's function"
+        );
         assert_eq!(attr(5, iac::ATTR_STACK), None, "no cross-region match");
         assert_eq!(attr(6, iac::ATTR_LOGICAL_ID).as_deref(), Some("Cache"));
         assert_eq!(attr(7, iac::ATTR_STACK), None, "names are not identifiers");

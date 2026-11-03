@@ -56,7 +56,8 @@ pub mod builtin {
 /// Monthly price of one read and one write capacity unit for a DynamoDB
 /// table, by its table class.
 pub fn dynamodb_unit_monthly(r: &crate::inventory::Resource) -> (f64, f64) {
-    let ia = r.attrs.get("table_class").and_then(|v| v.as_str()) == Some("STANDARD_INFREQUENT_ACCESS");
+    let ia =
+        r.attrs.get("table_class").and_then(|v| v.as_str()) == Some("STANDARD_INFREQUENT_ACCESS");
     let (read, write) = if ia {
         (builtin::DYNAMODB_IA_RCU_HOUR, builtin::DYNAMODB_IA_WCU_HOUR)
     } else {
@@ -76,7 +77,9 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
     match r.resource_type {
         // Secrets scheduled for deletion and keys pending deletion aren't billed.
         T::SecretsManagerSecret if text("deleted").is_none() => Some(builtin::SECRET),
-        T::KmsKey if matches!(text("state"), Some("Enabled" | "Disabled")) => Some(builtin::KMS_KEY),
+        T::KmsKey if matches!(text("state"), Some("Enabled" | "Disabled")) => {
+            Some(builtin::KMS_KEY)
+        }
         // No size when its listing failed (e.g. ecr:DescribeImages denied):
         // no price either, rather than a confident $0.
         T::EcrRepository => Some(r.attrs.get("size_gib")?.as_f64()? * builtin::ECR_GB),
@@ -111,14 +114,23 @@ pub fn platform_monthly(r: &crate::inventory::Resource) -> Option<f64> {
             // are stored, but not backed up, separately. Each item is billed
             // 100 bytes of overhead that the reported size leaves out, 48
             // more in a global table.
-            let overhead = if r.attrs.contains_key("replica_regions") { 148.0 } else { 100.0 };
+            let overhead = if r.attrs.contains_key("replica_regions") {
+                148.0
+            } else {
+                100.0
+            };
             let table_gib = (r.attrs.get("size_bytes")?.as_f64()?
                 + num("local_index_size_bytes")
                 + num("item_count") * overhead)
                 / GIB;
             let gib = table_gib + num("index_size_bytes") / GIB;
             let ia = text("table_class") == Some("STANDARD_INFREQUENT_ACCESS");
-            let storage = gib * if ia { builtin::DYNAMODB_IA_GB } else { builtin::DYNAMODB_GB };
+            let storage = gib
+                * if ia {
+                    builtin::DYNAMODB_IA_GB
+                } else {
+                    builtin::DYNAMODB_GB
+                };
             let backups = if r.attrs.get("pitr").and_then(|v| v.as_bool()) == Some(true) {
                 table_gib * builtin::DYNAMODB_PITR_GB
             } else {

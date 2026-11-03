@@ -149,14 +149,15 @@ pub async fn dynamodb(ctx: &Ctx<'_>) -> Result<Collected> {
             let Some(me) = t.table_arn() else { continue };
             let mut r = Resource::new(T::DynamoDbTable, me, acct, region, name);
             r.name = Some(name.clone());
-            let capacity = |p: Option<&aws_sdk_dynamodb::types::ProvisionedThroughputDescription>| {
-                p.map_or((0, 0), |p| {
-                    (
-                        p.read_capacity_units().unwrap_or(0),
-                        p.write_capacity_units().unwrap_or(0),
-                    )
-                })
-            };
+            let capacity =
+                |p: Option<&aws_sdk_dynamodb::types::ProvisionedThroughputDescription>| {
+                    p.map_or((0, 0), |p| {
+                        (
+                            p.read_capacity_units().unwrap_or(0),
+                            p.write_capacity_units().unwrap_or(0),
+                        )
+                    })
+                };
             let (read, write) = capacity(t.provisioned_throughput());
             let indexes = t.global_secondary_indexes();
             let (gsi_read, gsi_write) = indexes
@@ -388,7 +389,10 @@ async fn consumed_capacity(
             // CloudWatch answers per query: `Complete`, or `PartialData` on
             // all but the last page; anything else means no reliable data.
             use aws_sdk_cloudwatch::types::StatusCode;
-            if !matches!(m.status_code(), Some(StatusCode::Complete | StatusCode::PartialData)) {
+            if !matches!(
+                m.status_code(),
+                Some(StatusCode::Complete | StatusCode::PartialData)
+            ) {
                 u.failed = true;
             }
             let total: f64 = m.values().iter().sum();

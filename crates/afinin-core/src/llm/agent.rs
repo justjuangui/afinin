@@ -237,7 +237,15 @@ pub async fn run_turn(
         if round > 0
             && let Some(answer) = stop(&rounds)
         {
-            return Ok(finish(conv, first_citation, answer, StopReason::Other, model, rounds, started));
+            return Ok(finish(
+                conv,
+                first_citation,
+                answer,
+                StopReason::Other,
+                model,
+                rounds,
+                started,
+            ));
         }
         progress(Progress::Thinking { round });
         let waited = std::time::Instant::now();
@@ -294,7 +302,15 @@ pub async fn run_turn(
                 StopReason::MaxTokens => answer.push_str("\n\n_(The answer was cut off at the model's length limit.)_"),
                 _ => {}
             }
-            return Ok(finish(conv, first_citation, answer, reply.stop, model, rounds, started));
+            return Ok(finish(
+                conv,
+                first_citation,
+                answer,
+                reply.stop,
+                model,
+                rounds,
+                started,
+            ));
         }
 
         // All results go back in a single user message.
@@ -311,7 +327,9 @@ pub async fn run_turn(
             let label = super::tools::describe(&name, &input);
             let earlier = conv.citations[first_citation..]
                 .iter()
-                .find(|c| c.ok && c.duplicate_of.is_none() && trace::call_key(&c.tool, &c.input) == key)
+                .find(|c| {
+                    c.ok && c.duplicate_of.is_none() && trace::call_key(&c.tool, &c.input) == key
+                })
                 .map(|c| (c.n, c.result.clone()));
             let (result, ok, ms, duplicate_of, for_model) = match earlier {
                 Some((prev, result)) => (
@@ -334,7 +352,8 @@ pub async fn run_turn(
                     };
                     let ms = ran.elapsed().as_millis() as u64;
                     let mut for_model = json!({"source": n});
-                    if let (Some(dst), Some(src)) = (for_model.as_object_mut(), result.as_object()) {
+                    if let (Some(dst), Some(src)) = (for_model.as_object_mut(), result.as_object())
+                    {
                         dst.extend(src.clone());
                     } else {
                         for_model["result"] = result.clone();
@@ -625,8 +644,14 @@ mod tests {
         let Block::ToolResult { content, .. } = &conv.messages[2].blocks[1] else {
             panic!("expected a tool result");
         };
-        assert!(content.contains("\"same_as_source\":1") && !content.contains("total"), "{content}");
-        assert!(matches!(&turn.flags[0], trace::TraceFlag::RepeatedCall { times: 2, .. }));
+        assert!(
+            content.contains("\"same_as_source\":1") && !content.contains("total"),
+            "{content}"
+        );
+        assert!(matches!(
+            &turn.flags[0],
+            trace::TraceFlag::RepeatedCall { times: 2, .. }
+        ));
     }
 
     #[tokio::test]

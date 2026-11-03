@@ -224,15 +224,21 @@ fn from_tags(tags: &BTreeMap<String, String>) -> Option<ManagedBy> {
         // (`terraform`) loses to the stack AWS recorded.
         if let Some(d) = declared(tags).filter(|d| d.tool.deploys_with_cloudformation()) {
             return Some(
-                ManagedBy::new(d.tool, Confidence::Certain, format!("{}; {evidence}", d.evidence))
-                    .in_stack(Some(stack)),
+                ManagedBy::new(
+                    d.tool,
+                    Confidence::Certain,
+                    format!("{}; {evidence}", d.evidence),
+                )
+                .in_stack(Some(stack)),
             );
         }
         let found = if stack.starts_with("awseb-") {
             ManagedBy::new(IacTool::ElasticBeanstalk, Confidence::Certain, evidence)
         } else if stack.starts_with("amplify-") {
             ManagedBy::new(IacTool::Amplify, Confidence::Likely, evidence)
-        } else if let Some(id) = tag("aws:cloudformation:logical-id").filter(|id| cdk_logical_id(id)) {
+        } else if let Some(id) =
+            tag("aws:cloudformation:logical-id").filter(|id| cdk_logical_id(id))
+        {
             ManagedBy::new(
                 IacTool::Cdk,
                 Confidence::Likely,
@@ -287,9 +293,8 @@ fn declared(tags: &BTreeMap<String, String>) -> Option<ManagedBy> {
 /// Terraform names resources it must name itself `terraform-` plus a
 /// timestamp-based ID (`terraform-20240612153045123400000001`).
 fn terraform_generated(name: &str) -> bool {
-    name.strip_prefix("terraform-").is_some_and(|rest| {
-        rest.len() >= 20 && rest.chars().take(20).all(|c| c.is_ascii_digit())
-    })
+    name.strip_prefix("terraform-")
+        .is_some_and(|rest| rest.len() >= 20 && rest.chars().take(20).all(|c| c.is_ascii_digit()))
 }
 
 /// The tool that made `r`, from its own data (no neighbours).
@@ -337,7 +342,10 @@ pub fn detect(r: &Resource) -> Option<ManagedBy> {
     if let Some(m) = from_tags(&r.tags) {
         return Some(m);
     }
-    for name in [Some(r.native_id.as_str()), r.name.as_deref()].into_iter().flatten() {
+    for name in [Some(r.native_id.as_str()), r.name.as_deref()]
+        .into_iter()
+        .flatten()
+    {
         if terraform_generated(name) {
             return Some(ManagedBy::new(
                 IacTool::Terraform,
@@ -346,7 +354,10 @@ pub fn detect(r: &Resource) -> Option<ManagedBy> {
             ));
         }
     }
-    for name in [r.name.as_deref(), Some(r.native_id.as_str())].into_iter().flatten() {
+    for name in [r.name.as_deref(), Some(r.native_id.as_str())]
+        .into_iter()
+        .flatten()
+    {
         if name.starts_with("tf-") || name.starts_with("tf_") {
             return Some(ManagedBy::new(
                 IacTool::Terraform,
@@ -477,7 +488,8 @@ pub fn summarize(resources: &[Resource], found: &HashMap<&str, ManagedBy>) -> Ia
             count,
         })
         .collect();
-    s.unmanaged_by_type.sort_by_key(|t| std::cmp::Reverse(t.count));
+    s.unmanaged_by_type
+        .sort_by_key(|t| std::cmp::Reverse(t.count));
     s
 }
 
@@ -506,15 +518,21 @@ mod tests {
         let mut in_stack = res(T::SqsQueue, "q", &[]);
         in_stack.attrs.insert(ATTR_STACK.into(), "api".into());
         in_stack.attrs.insert(ATTR_TOOL.into(), "cdk".into());
-        in_stack.attrs.insert(ATTR_LOGICAL_ID.into(), "QueueA1B2C3D4".into());
+        in_stack
+            .attrs
+            .insert(ATTR_LOGICAL_ID.into(), "QueueA1B2C3D4".into());
         assert_eq!(tool(&in_stack), Some((Cdk, Certain)));
         assert_eq!(detect(&in_stack).unwrap().stack.as_deref(), Some("api"));
 
         // A CloudFormation stack without CDK metadata, but CDK logical IDs.
         let mut quiet_cdk = res(T::SqsQueue, "q2", &[]);
         quiet_cdk.attrs.insert(ATTR_STACK.into(), "api".into());
-        quiet_cdk.attrs.insert(ATTR_TOOL.into(), "cloud_formation".into());
-        quiet_cdk.attrs.insert(ATTR_LOGICAL_ID.into(), "JobsQueueA1B2C3D4".into());
+        quiet_cdk
+            .attrs
+            .insert(ATTR_TOOL.into(), "cloud_formation".into());
+        quiet_cdk
+            .attrs
+            .insert(ATTR_LOGICAL_ID.into(), "JobsQueueA1B2C3D4".into());
         assert_eq!(tool(&quiet_cdk), Some((Cdk, Likely)));
 
         // In a plain CloudFormation stack, the SAM tag names the tool.
@@ -526,12 +544,18 @@ mod tests {
             ("aws:cloudformation:stack-name", "mkt-stack-blue"),
             ("aws:cloudformation:logical-id", "FrontEndAutoScaleGroup"),
         ];
-        assert_eq!(tool(&res(T::Ec2Instance, "i-1", &cfn_tags)), Some((CloudFormation, Certain)));
+        assert_eq!(
+            tool(&res(T::Ec2Instance, "i-1", &cfn_tags)),
+            Some((CloudFormation, Certain))
+        );
         let cdk_tags = [
             ("aws:cloudformation:stack-name", "Api"),
             ("aws:cloudformation:logical-id", "HandlerF68F3FF0"),
         ];
-        assert_eq!(tool(&res(T::LambdaFunction, "f", &cdk_tags)), Some((Cdk, Likely)));
+        assert_eq!(
+            tool(&res(T::LambdaFunction, "f", &cdk_tags)),
+            Some((Cdk, Likely))
+        );
         // The team's ManagedBy tag makes it certain, with both pieces of evidence.
         let declared_cdk = [
             ("ManagedBy", "cdk"),
@@ -545,24 +569,45 @@ mod tests {
             "tag ManagedBy = cdk; tag aws:cloudformation:stack-name = Jc-Site-JuanCarvajal"
         );
         // A tag claiming Terraform doesn't beat the stack AWS recorded.
-        let conflicting = [("ManagedBy", "terraform"), ("aws:cloudformation:stack-name", "web")];
-        assert_eq!(tool(&res(T::S3Bucket, "b", &conflicting)), Some((CloudFormation, Certain)));
+        let conflicting = [
+            ("ManagedBy", "terraform"),
+            ("aws:cloudformation:stack-name", "web"),
+        ];
+        assert_eq!(
+            tool(&res(T::S3Bucket, "b", &conflicting)),
+            Some((CloudFormation, Certain))
+        );
         // In a plain CloudFormation stack, a declared CDK tag names the tool.
         let mut in_plain = res(T::S3Bucket, "b2", &[("ManagedBy", "cdk")]);
         in_plain.attrs.insert(ATTR_STACK.into(), "site".into());
-        in_plain.attrs.insert(ATTR_TOOL.into(), "cloud_formation".into());
+        in_plain
+            .attrs
+            .insert(ATTR_TOOL.into(), "cloud_formation".into());
         assert_eq!(tool(&in_plain), Some((Cdk, Certain)));
         assert_eq!(
             tool(&res(T::S3Bucket, "b", &[("ManagedBy", "Terraform")])),
             Some((Terraform, Certain))
         );
-        assert_eq!(tool(&res(T::S3Bucket, "b", &[("terraform", "true")])), Some((Terraform, Certain)));
-        assert_eq!(tool(&res(T::S3Bucket, "b", &[("pulumi:project", "x")])), Some((Pulumi, Certain)));
         assert_eq!(
-            tool(&res(T::SecurityGroup, "terraform-20240612153045123400000001", &[])),
+            tool(&res(T::S3Bucket, "b", &[("terraform", "true")])),
+            Some((Terraform, Certain))
+        );
+        assert_eq!(
+            tool(&res(T::S3Bucket, "b", &[("pulumi:project", "x")])),
+            Some((Pulumi, Certain))
+        );
+        assert_eq!(
+            tool(&res(
+                T::SecurityGroup,
+                "terraform-20240612153045123400000001",
+                &[]
+            )),
             Some((Terraform, Likely))
         );
-        assert_eq!(tool(&res(T::SnsTopic, "tf-alerts", &[])), Some((Terraform, Hint)));
+        assert_eq!(
+            tool(&res(T::SnsTopic, "tf-alerts", &[])),
+            Some((Terraform, Hint))
+        );
         assert_eq!(tool(&res(T::S3Bucket, "logs", &[("Name", "logs")])), None);
         // Not a CDK hash: lowercase hex, or nothing before it.
         assert!(!cdk_logical_id("Queue1a2b3c4d") && !cdk_logical_id("F68F3FF0"));
@@ -571,7 +616,11 @@ mod tests {
     #[test]
     fn attached_resources_inherit_and_coverage_skips_derived_ones() {
         use ResourceType as T;
-        let instance = res(T::Ec2Instance, "i-1", &[("aws:cloudformation:stack-name", "web")]);
+        let instance = res(
+            T::Ec2Instance,
+            "i-1",
+            &[("aws:cloudformation:stack-name", "web")],
+        );
         let volume = res(T::EbsVolume, "vol-1", &[]);
         let eni = res(T::NetworkInterface, "eni-1", &[]);
         let bucket = res(T::S3Bucket, "manual", &[]);
@@ -598,8 +647,15 @@ mod tests {
         ];
         let found = detect_all(&resources, &edges);
         let vol = &found["arn:vol-1"];
-        assert_eq!((vol.tool, vol.confidence), (IacTool::CloudFormation, Confidence::Likely));
-        assert!(vol.evidence.starts_with("attached to i-1"), "{}", vol.evidence);
+        assert_eq!(
+            (vol.tool, vol.confidence),
+            (IacTool::CloudFormation, Confidence::Likely)
+        );
+        assert!(
+            vol.evidence.starts_with("attached to i-1"),
+            "{}",
+            vol.evidence
+        );
         assert!(found.contains_key("arn:eni-1"));
         assert!(!found.contains_key("arn:vol-2"), "not from its snapshot");
 
@@ -608,7 +664,11 @@ mod tests {
         assert_eq!((s.total, s.unmanaged), (4, 2));
         assert_eq!(s.by_tool[0].resources, 2);
         assert_eq!(s.by_tool[0].certain, 1);
-        let unmanaged: Vec<_> = s.unmanaged_by_type.iter().map(|t| (t.resource_type, t.count)).collect();
+        let unmanaged: Vec<_> = s
+            .unmanaged_by_type
+            .iter()
+            .map(|t| (t.resource_type, t.count))
+            .collect();
         assert!(unmanaged.contains(&(T::S3Bucket, 1)) && unmanaged.contains(&(T::EbsVolume, 1)));
     }
 }

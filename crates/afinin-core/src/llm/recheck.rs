@@ -6,8 +6,8 @@
 use serde::Serialize;
 
 use super::agent::{Citation, Turn};
-use super::tools::describe;
 use super::grounding::states_figure;
+use super::tools::describe;
 use super::trace::call_key;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -86,10 +86,18 @@ mod tests {
 
     #[test]
     fn expected_figures_match_at_any_rounding_and_text_ignores_case() {
-        let answer = "September spend was $1,234.56 [1], up 12.5% — mostly Amazon EC2. Forecast 1.2k.";
-        let expected: Vec<String> = ["$1,234.56", "12.5%", "1,200", "amazon ec2", "$999.00", "Lambda"]
-            .map(String::from)
-            .into();
+        let answer =
+            "September spend was $1,234.56 [1], up 12.5% — mostly Amazon EC2. Forecast 1.2k.";
+        let expected: Vec<String> = [
+            "$1,234.56",
+            "12.5%",
+            "1,200",
+            "amazon ec2",
+            "$999.00",
+            "Lambda",
+        ]
+        .map(String::from)
+        .into();
         let met: Vec<bool> = check_expectations(answer, &expected)
             .iter()
             .map(|r| r.met)
