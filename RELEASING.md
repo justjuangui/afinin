@@ -30,10 +30,13 @@ auto-update to builds signed with a new key.
 
 ### macOS code signing and notarization (recommended)
 
-Without it, macOS shows an "unidentified developer" warning. Set the secrets `APPLE_CERTIFICATE`
+Without it, the macOS app is signed ad hoc (`signingIdentity: "-"`), and macOS says it can't
+check the app for malicious software: users open it once with right-click → **Open** (or
+System Settings → Privacy & Security → **Open Anyway**). To sign and notarize, set the secrets `APPLE_CERTIFICATE`
 (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
 `APPLE_PASSWORD` (app-specific password) and `APPLE_TEAM_ID`. See
-<https://v2.tauri.app/distribute/sign/macos/>.
+<https://v2.tauri.app/distribute/sign/macos/>. The workflow passes them to the build only
+when `APPLE_CERTIFICATE` is set.
 
 When you turn it on, check that the signed app still opens its database: it loads DuckDB's
 `httpfs` extension (signed by DuckDB, not by you), which a hardened runtime may refuse unless

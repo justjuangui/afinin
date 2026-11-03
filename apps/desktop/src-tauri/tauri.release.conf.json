@@ -4,6 +4,9 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "resources/duckdb/httpfs.duckdb_extension": "duckdb/httpfs.duckdb_extension"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   },
   "plugins": {
